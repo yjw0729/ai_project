@@ -1,0 +1,53 @@
+# Python / Flask project gitignore
+
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+venv/
+.venv/
+env/
+.env/
+
+# IDE / editor settings
+.vscode/
+.idea/
+*.iml
+
+# OS files
+Thumbs.db
+.DS_Store
+
+# Logs
+logs/
+*.log
+app*
+
+# Uploads / generated data
+uploads/
+data/generated_cases/
+
+# Cache / coverage
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+htmlcov/
+
+data/
+*.json
+
+
+# Distribution / packaging
+build/
+dist/
+*.egg-info/
+
+# Environment & config secrets (keep if you want them tracked)
+.env.local
+.env.*.local
+
+

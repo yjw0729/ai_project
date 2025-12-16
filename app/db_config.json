@@ -1,0 +1,23 @@
+{
+  "default": {
+    "type": "mysql+pymysql",
+    "host": "localhost",
+    "port": 3308,
+    "db_name": "yjw_test",
+    "user": "root",
+    "password": "17745611626yjw"
+  },
+
+  "opts": {
+    "type": "mysql+pymysql",
+    "host": "22.50.6.9",
+    "port": 3306,
+    "db_name": "opts",
+    "user": "opts_test",
+    "password": "opts_test"
+  }
+
+}
+
+
+
