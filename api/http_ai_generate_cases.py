@@ -130,7 +130,12 @@ def _case_to_entity(api_name: str, creator: str, case: dict, api_config_id: int 
         variables=None,
         max_retry_times=0,
         timeout=None,
+        # 兼容旧字段：status 仍保留（草稿/废弃等生命周期）
         status="draft",
+        # 新字段：默认“启用 + 未执行”，便于前端直接展示/执行
+        case_status="enabled",
+        last_execution_status="not_run",
+        last_execution_time=None,
         version=1,
         creator=creator or "ai_generator",
         reviewer=None,

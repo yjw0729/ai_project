@@ -76,6 +76,25 @@ class TestCase(Base):
         default='draft',
         comment='状态: draft-草稿, active-激活, inactive-未激活, deprecated-废弃'
     )
+
+    # 新增：案例状态（启用/停用）与最近一次执行结果（成功/失败/未执行）
+    # 说明：
+    # - case_status：控制是否允许在“执行”列表中被执行（启用/停用）
+    # - last_execution_status：记录最近一次执行结果（未执行/成功/失败）
+    case_status = Column(
+        Enum('enabled', 'disabled'),
+        nullable=False,
+        default='enabled',
+        comment='案例状态: enabled-启用, disabled-停用'
+    )
+    last_execution_status = Column(
+        Enum('not_run', 'success', 'failed'),
+        nullable=False,
+        default='not_run',
+        comment='最近一次执行状态: not_run-未执行, success-成功, failed-失败'
+    )
+    last_execution_time = Column(DateTime, comment='最近一次执行时间')
+
     version = Column(Integer, default=1, comment='版本号')
 
     # 评审信息

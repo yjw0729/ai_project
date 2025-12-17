@@ -3,6 +3,7 @@ import json
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Dict, Any
+from datetime import datetime
 
 import requests
 from flask import Blueprint, request, jsonify, make_response, current_app
@@ -11,6 +12,8 @@ from common.db_mapper.test_case_mapper import TestCaseMapper
 from common.db_mapper.api_config_mapper import ApiConfigMapper
 from common.db_mapper.environment_config_mapper import EnvironmentConfigMapper
 from common.datacase_function.contect_db import db_session
+from common.db_enitiy.api_config import ApiConfig
+from sqlalchemy import func
 
 test_exec_opt = Blueprint("test_exec_opt", __name__)
 
@@ -38,6 +41,111 @@ def _merge_headers(env_headers: Dict[str, Any], api_headers: Dict[str, Any], cas
     if case_headers:
         merged.update(case_headers)
     return merged
+
+
+def _parse_payload() -> Dict[str, Any]:
+    """
+    兼容从 query / JSON body / form 获取参数（前端有时会 GET + body，这里也做兼容）
+    """
+    payload: Any = {}
+    try:
+        payload = request.args.to_dict(flat=True) or {}
+    except Exception:
+        payload = {}
+
+    # JSON body
+    body = request.get_json(silent=True)
+    if body is None:
+        body = request.get_json(force=True, silent=True)
+
+    if isinstance(body, dict):
+        payload.update(body)
+    elif body is None:
+        # form / raw json
+        try:
+            form_data = request.form.to_dict(flat=True)
+            if isinstance(form_data, dict):
+                payload.update(form_data)
+        except Exception:
+            pass
+        if request.data:
+            raw = request.data.decode("utf-8", errors="ignore")
+            try:
+                raw_obj = json.loads(raw)
+                if isinstance(raw_obj, dict):
+                    payload.update(raw_obj)
+            except Exception:
+                # 容错尾部多余引号
+                if raw.endswith("'") or raw.endswith('"'):
+                    try:
+                        raw_obj = json.loads(raw[:-1])
+                        if isinstance(raw_obj, dict):
+                            payload.update(raw_obj)
+                    except Exception:
+                        pass
+
+    if not isinstance(payload, dict):
+        payload = {}
+    return payload
+
+
+@test_exec_opt.route("/testcase/list", methods=["GET", "POST"])
+def list_testcases():
+    """
+    查询测试案例列表（默认全量）
+
+    可选入参（query 或 JSON body 均可）：
+    - module: str 功能模块（test_case.module 精确）
+    - system: str 系统（按 api_config.module 精确筛选，兼容前端字段命名）
+    - request_id: str 请求ID（按 api_config.id 转字符串后做模糊匹配）
+    - case_status: str 案例状态（enabled/disabled）
+    - execution_status: str 最近一次执行结果（not_run/success/failed）
+
+    返回：test_case 表记录数组（to_json）
+    """
+    logger = current_app.logger or logging.getLogger(__name__)
+    payload = _parse_payload()
+    logger.info("【查询测试案例】入参=%s", payload)
+
+    # 收敛后的筛选条件（全部可选，不传则查询全量）
+    module = payload.get("module") or None
+    system = payload.get("system") or None
+    request_id = payload.get("request_id") or None
+    case_status = payload.get("case_status") or None
+    execution_status = payload.get("execution_status") or None
+
+    mapper = TestCaseMapper()
+    rows = []
+    with db_session() as session:
+        # 允许基于 api_config 维度筛选（system/request_id）
+        q = session.query(mapper.entity_class)
+        if system or request_id:
+            q = q.outerjoin(ApiConfig, ApiConfig.id == mapper.entity_class.api_config_id)
+
+        if module:
+            q = q.filter(mapper.entity_class.module == module)
+        if case_status:
+            q = q.filter(mapper.entity_class.case_status == case_status)
+        if execution_status:
+            q = q.filter(mapper.entity_class.last_execution_status == execution_status)
+        if system:
+            q = q.filter(ApiConfig.module == system)
+        if request_id:
+            like_req = f"%{request_id}%"
+            q = q.filter(func.cast(ApiConfig.id, String).ilike(like_req))
+
+        rows = q.order_by(
+            mapper.entity_class.module,
+            mapper.entity_class.priority,
+            mapper.entity_class.name
+        ).all()
+        # 避免会话关闭后访问属性触发 DetachedInstanceError
+        for r in rows:
+            session.expunge(r)
+
+    data = [r.to_json() for r in rows]
+    logger.info("【查询测试案例】返回数量=%s", len(data))
+    return json_response({"code": 200, "msg": "查询成功", "data": data}, status=200)
 
 
 def _execute_one(case: Dict[str, Any], api_conf: Dict[str, Any], env_conf: Dict[str, Any], timeout: int):
@@ -106,32 +214,7 @@ def execute_testcases():
     - concurrency: int 可选，并发线程数，默认 5
     """
     logger = current_app.logger or logging.getLogger(__name__)
-    # 兼容 JSON / form / x-www-form-urlencoded，容错尾部多余引号
-    payload = request.get_json(silent=True)
-    if payload is None:
-        payload = request.get_json(force=True, silent=True)
-    if payload is None:
-        payload = {}
-        try:
-            form_data = request.form.to_dict(flat=True)
-            payload.update(form_data)
-        except Exception:
-            pass
-        if not payload and request.data:
-            raw = request.data.decode("utf-8", errors="ignore")
-            try:
-                payload = json.loads(raw)
-            except Exception:
-                # 尝试去掉尾部多余的引号再解析
-                if raw.endswith("'") or raw.endswith('"'):
-                    try:
-                        payload = json.loads(raw[:-1])
-                    except Exception:
-                        payload = {}
-                else:
-                    payload = {}
-    if not isinstance(payload, dict):
-        payload = {}
+    payload = _parse_payload()
 
     logger.info("【执行测试案例】原始入参=%s", payload)
 
@@ -225,6 +308,28 @@ def execute_testcases():
     for fut in as_completed(futures):
         results.append(fut.result())
     executor.shutdown(wait=True)
+
+    # 回写最近一次执行状态到 test_case（成功/失败）
+    try:
+        now = datetime.now()
+        status_updates = {}
+        for r in results:
+            cid = r.get("case_id")
+            if not cid:
+                continue
+            status_updates[int(cid)] = "success" if r.get("success") else "failed"
+
+        if status_updates:
+            with db_session() as session:
+                for cid, st in status_updates.items():
+                    session.query(case_mapper.entity_class).filter(
+                        case_mapper.entity_class.id == cid
+                    ).update(
+                        {"last_execution_status": st, "last_execution_time": now},
+                        synchronize_session=False
+                    )
+    except Exception as e:
+        logger.warning("【执行测试案例】回写最近执行状态失败: %s", str(e))
 
     success_count = sum(1 for r in results if r.get("success"))
     logger.info("【执行测试案例】完成，总数=%s, 成功=%s", len(results), success_count)
