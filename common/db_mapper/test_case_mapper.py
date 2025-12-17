@@ -61,12 +61,21 @@ class TestCaseMapper:
 
         with self.session_scope() as session:
             session.add(entity)
+            # 先 flush 拿到自增主键
             session.flush()
-            case_id = entity.id
+            pk_id = entity.id
+            # 按约定生成业务用例编号：TEST_CASE_ + 9位数字
+            # 示例：id=1 -> TEST_CASE_000000001
+            biz_case_id = f"TEST_CASE_{pk_id:09d}"
+            # 仅当未显式指定 case_id 时才写入，避免覆盖外部自定义值
+            if not getattr(entity, "case_id", None):
+                entity.case_id = biz_case_id
+            # 再次 flush，确保 case_id 持久化到数据库
+            session.flush()
             # 将ID直接写入 __dict__ 以便离开 session 后仍可读取
-            entity.__dict__['id'] = case_id
+            entity.__dict__['id'] = pk_id
             # 不返回实体，直接返回主键，避免会话关闭后访问属性触发懒加载
-            return case_id
+            return pk_id
 
     def update(self, id, update_data):
         """更新测试案例"""

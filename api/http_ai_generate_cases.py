@@ -77,8 +77,23 @@ def _get_or_create_api_config(api_name: str, api_desc: str, path: str, method: s
         return api_conf.id
 
 
-def _case_to_entity(api_name: str, creator: str, case: dict, api_config_id: int = None) -> TestCase:
-    """将生成的用例字典转换为 TestCase ORM 实体。"""
+def _case_to_entity(
+    api_name: str,
+    creator: str,
+    case: dict,
+    api_config_id: int = None,
+    module: str = None,
+    system: str = None,
+) -> TestCase:
+    """将生成的用例字典转换为 TestCase ORM 实体。
+
+    :param api_name: 接口名称（用于默认模块名/用例名）
+    :param creator: 创建人
+    :param case: 单条用例字典
+    :param api_config_id: 关联的 api_config.id
+    :param module: 所属模块（前端入参，可选；为空时回退到 api_name）
+    :param system: 所属系统（前端入参，可选）
+    """
     request_block = case.get("request") or {}
     method = request_block.get("method") or ""
     path = request_block.get("path") or ""
@@ -107,10 +122,14 @@ def _case_to_entity(api_name: str, creator: str, case: dict, api_config_id: int 
     if priority not in ["P0", "P1", "P2", "P3"]:
         priority = "P2"
 
+    # 所属模块优先使用外部显式传入的 module，其次使用 api_name，最后 default
+    module_val = module or api_name or "default"
+
     return TestCase(
         name=case.get("title") or (api_name + "_case"),
         description=case.get("expect") or "",
-        module=api_name or "default",
+        module=module_val,
+        system=system,
         priority=priority,
         tags=case.get("tags") or [],
         preconditions="",
@@ -145,14 +164,30 @@ def _case_to_entity(api_name: str, creator: str, case: dict, api_config_id: int 
     )
 
 
-def _save_cases_to_db(api_name: str, creator: str, cases: list, logger, db_key: str = "default", api_config_id: int = None):
+def _save_cases_to_db(
+    api_name: str,
+    creator: str,
+    cases: list,
+    logger,
+    db_key: str = "default",
+    api_config_id: int = None,
+    module: str = None,
+    system: str = None,
+):
     mapper = TestCaseMapper(db_key=db_key)
     saved_ids = []
     logger.info("【数据库写入】开始写入用例，总数=%d, api_name=%s, creator=%s, db_key=%s",
                 len(cases), api_name, creator, db_key)
     for idx, c in enumerate(cases):
         try:
-            entity = _case_to_entity(api_name, creator, c, api_config_id=api_config_id)
+            entity = _case_to_entity(
+                api_name,
+                creator,
+                c,
+                api_config_id=api_config_id,
+                module=module,
+                system=system,
+            )
             case_id = mapper.create(entity)
             saved_ids.append(case_id)
             # 不再访问 entity（已脱管），直接使用原始标题避免 DetachedInstanceError
@@ -262,6 +297,8 @@ def generate_testcases():
         # 写入数据库
         creator = payload.get("creator") or "ai_generator"
         db_key = payload.get("db_key") or "default"
+        module = payload.get("module")  # 所属模块（可选）
+        system = payload.get("system")  # 所属系统（可选）
 
         # 获取/创建 api_config 以便后续案例关联
         api_config_id = _get_or_create_api_config(
@@ -276,7 +313,16 @@ def generate_testcases():
         )
         persist_to_db = ai_conf.get("persist_to_db", True)
         if persist_to_db:
-            saved_ids = _save_cases_to_db(payload.get("api_name"), creator, result.get("cases") or [], logger, db_key=db_key, api_config_id=api_config_id)
+            saved_ids = _save_cases_to_db(
+                payload.get("api_name"),
+                creator,
+                result.get("cases") or [],
+                logger,
+                db_key=db_key,
+                api_config_id=api_config_id,
+                module=module,
+                system=system,
+            )
         else:
             saved_ids = []
             logger.info("【配置】persist_to_db=false，本次不写入数据库")

@@ -1,6 +1,7 @@
 import logging
 import json
 import threading
+import random
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Dict, Any
 from datetime import datetime
@@ -13,7 +14,7 @@ from common.db_mapper.api_config_mapper import ApiConfigMapper
 from common.db_mapper.environment_config_mapper import EnvironmentConfigMapper
 from common.datacase_function.contect_db import db_session
 from common.db_enitiy.api_config import ApiConfig
-from sqlalchemy import func
+from sqlalchemy import func, String
 
 test_exec_opt = Blueprint("test_exec_opt", __name__)
 
@@ -41,6 +42,29 @@ def _merge_headers(env_headers: Dict[str, Any], api_headers: Dict[str, Any], cas
     if case_headers:
         merged.update(case_headers)
     return merged
+
+
+def _generate_out_trade_no() -> str:
+    """生成 32 位纯数字 outTradeNo。"""
+    return "".join(random.choices("0123456789", k=32))
+
+
+def _replace_dynamic_vars(obj: Any, ctx: Dict[str, Any]) -> Any:
+    """
+    递归替换动态变量，目前仅支持 {{outTradeNo}} -> 随机 32 位数字。
+
+    为保证同一次请求内一致性，同一个 outTradeNo 会在 ctx 里缓存复用。
+    """
+    token = "{{outTradeNo}}"
+    if isinstance(obj, dict):
+        return {k: _replace_dynamic_vars(v, ctx) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_replace_dynamic_vars(v, ctx) for v in obj]
+    if isinstance(obj, str) and token in obj:
+        if "outTradeNo" not in ctx:
+            ctx["outTradeNo"] = _generate_out_trade_no()
+        return obj.replace(token, ctx["outTradeNo"])
+    return obj
 
 
 def _parse_payload() -> Dict[str, Any]:
@@ -96,7 +120,7 @@ def list_testcases():
 
     可选入参（query 或 JSON body 均可）：
     - module: str 功能模块（test_case.module 精确）
-    - system: str 系统（按 api_config.module 精确筛选，兼容前端字段命名）
+    - system: str 系统（按 test_case.system 精确筛选）
     - request_id: str 请求ID（按 api_config.id 转字符串后做模糊匹配）
     - case_status: str 案例状态（enabled/disabled）
     - execution_status: str 最近一次执行结果（not_run/success/failed）
@@ -129,7 +153,8 @@ def list_testcases():
         if execution_status:
             q = q.filter(mapper.entity_class.last_execution_status == execution_status)
         if system:
-            q = q.filter(ApiConfig.module == system)
+            # 优先使用 test_case.system 字段进行筛选
+            q = q.filter(mapper.entity_class.system == system)
         if request_id:
             like_req = f"%{request_id}%"
             q = q.filter(func.cast(ApiConfig.id, String).ilike(like_req))
@@ -158,6 +183,12 @@ def _execute_one(case: Dict[str, Any], api_conf: Dict[str, Any], env_conf: Dict[
     env_headers = env_conf.get("headers") or {}
     api_headers = api_conf.get("headers") or {}
     request_type = (api_conf.get("request_type") or "json").lower()
+
+    # 动态变量替换（当前仅支持 {{outTradeNo}}）
+    dyn_ctx: Dict[str, Any] = {}
+    query = _replace_dynamic_vars(query, dyn_ctx)
+    body = _replace_dynamic_vars(body, dyn_ctx)
+    case_headers = _replace_dynamic_vars(case_headers, dyn_ctx)
 
     url = _join_url(env_conf.get("base_url") or "", api_path)
     headers = _merge_headers(env_headers, api_headers, case_headers)

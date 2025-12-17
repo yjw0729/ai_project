@@ -66,6 +66,8 @@ def generate_testcases_from_doc():
     - file: docx/pdf（必填）
     - api_name, http_method, path（必填）
     - api_desc, max_cases, persist（可选）
+    - module: 所属模块（可选）
+    - system: 所属系统（可选）
     - request_json: 请求入参JSON字符串（可选，优先使用）
     - response_json: 响应出参JSON字符串（可选）
     """
@@ -148,6 +150,9 @@ def generate_testcases_from_doc():
         "persist": persist,
         "creator": payload.get("creator") or "ai_generator",
         "db_key": payload.get("db_key") or "default",
+        # 新增：所属模块 & 所属系统（可选）
+        "module": payload.get("module"),
+        "system": payload.get("system"),
     }
 
     # 调用generate_testcases的核心逻辑（但不走HTTP路由）
@@ -229,6 +234,8 @@ def generate_testcases_from_doc():
             logger,
             db_key=testcase_payload.get("db_key"),
             api_config_id=api_config_id,
+            module=testcase_payload.get("module"),
+            system=testcase_payload.get("system"),
         )
     else:
         logger.info("【配置】persist_to_db=false，本次不写入数据库")

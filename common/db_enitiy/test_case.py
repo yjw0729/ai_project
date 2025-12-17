@@ -39,10 +39,15 @@ class TestCase(Base):
     # 主键
     id = Column(Integer, primary_key=True, autoincrement=True, comment='主键ID')
 
+    # 业务用例编号（例如：TEST_CASE_000000001），按自增ID格式化生成
+    case_id = Column(String(50), unique=True, nullable=True, comment='业务用例编号 TEST_CASE_000000001')
+
     # 基础信息
     name = Column(String(200), nullable=False, comment='测试案例名称')
     description = Column(String(1000), comment='案例描述')
     module = Column(String(100), nullable=False, comment='所属模块')
+    # 新增：所属系统，用于前端按系统维度进行筛选
+    system = Column(String(100), nullable=True, comment='所属系统')
 
     # 优先级和分类
     priority = Column(
