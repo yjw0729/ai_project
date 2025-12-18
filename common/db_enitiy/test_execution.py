@@ -23,7 +23,7 @@ class ExecutionStatus(enum.Enum):
 
 class TestExecution(Base):
     """测试执行结果表实体类"""
-    __tablename__ = 'test_execution'
+    __tablename__ = 'crosstest_test_execution'
 
     # 主键
     id = Column(Integer, primary_key=True, autoincrement=True, comment='主键ID')

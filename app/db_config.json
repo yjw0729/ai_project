@@ -1,5 +1,5 @@
 {
-  "default": {
+  "localhost": {
     "type": "mysql+pymysql",
     "host": "localhost",
     "port": 3308,
@@ -15,7 +15,18 @@
     "db_name": "opts",
     "user": "opts_test",
     "password": "opts_test"
+  },
+
+    "default": {
+    "type": "mysql+pymysql",
+    "host": "22.50.6.73",
+    "port": 3306,
+    "db_name": "quantumqa",
+    "user": "qa",
+    "password": "qa_tester"
   }
+
+
 
 }
 

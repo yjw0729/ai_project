@@ -12,7 +12,7 @@ Base = declarative_base()
 
 class TestSuiteCase(Base):
     """测试套件案例关联表实体类"""
-    __tablename__ = 'test_suite_case'
+    __tablename__ = 'crosstest_test_suite_case'
 
     # 主键
     id = Column(Integer, primary_key=True, autoincrement=True, comment='主键ID')

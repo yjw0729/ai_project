@@ -27,7 +27,7 @@ class SuiteStatus(enum.Enum):
 
 class TestSuite(Base):
     """测试套件表实体类"""
-    __tablename__ = 'test_suite'
+    __tablename__ = 'crosstest_test_suite'
 
     # 主键
     id = Column(Integer, primary_key=True, autoincrement=True, comment='主键ID')

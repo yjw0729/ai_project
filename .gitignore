@@ -37,7 +37,7 @@ data/generated_cases/
 coverage.xml
 htmlcov/
 
-data/
+data/debug/
 *.json
 
 
@@ -49,5 +49,13 @@ dist/
 # Environment & config secrets (keep if you want them tracked)
 .env.local
 .env.*.local
+
+
+temps/
+*.txt
+
+app/
+application.xml
+
 
 

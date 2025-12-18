@@ -34,7 +34,7 @@ class ReviewStatus(enum.Enum):
 
 class TestCase(Base):
     """测试案例表实体类"""
-    __tablename__ = 'test_case'
+    __tablename__ = 'crosstest_test_case'
 
     # 主键
     id = Column(Integer, primary_key=True, autoincrement=True, comment='主键ID')
