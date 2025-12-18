@@ -13,33 +13,16 @@ def get_xml_path(filename='eqlog.xml'):
     配置文件读取
     :return: 配置文件地址
     """
-    xml_path = os_pwd() + '/' + filename
-    if os_path.exists(xml_path):
-        pass
-    else:
-        xml_path = os_pwd() + '/eqconfig/' + filename
-        if os_path.exists(xml_path):
-            pass
-        else:
-            xml_path = os_path.abspath(os_path.join(os_pwd(), "..")) + '/' + filename
-            if os_path.exists(xml_path):
-                pass
-            else:
-                xml_path = os_path.abspath(os_path.join(os_pwd(), "..")) + '/eqconfig/' + filename
-                if os_path.exists(xml_path):
-                    pass
-                else:
-                    xml_path = os_path.abspath(os_path.join(os_pwd(), "../..")) + '/' + filename
-                    if os_path.exists(xml_path):
-                        pass
-                    else:
-                        xml_path = os_path.abspath(os_path.join(os_pwd(), "../..")) + '/eqconfig/' + filename
-                        if os_path.exists(xml_path):
-                            pass
-                        else:
-                            xml_path = ''
-    # 返回 xml 文件路径
-    return xml_path
+    # 简化查找逻辑，直接在 app 目录中查找
+    base_dir = os_path.dirname(os_path.dirname(os_path.dirname(__file__)))  # 项目根目录
+    xml_path = os_path.join(base_dir, "app", filename)
+    
+    if not os_path.exists(xml_path):
+        # 如果在 app 目录没找到，尝试在当前目录查找
+        xml_path = os_path.join(base_dir, filename)
+    
+    # 返回 xml 文件路径（如果存在）
+    return xml_path if os_path.exists(xml_path) else ''
 
 
 def read_xml(xml_path):
@@ -53,10 +36,13 @@ def read_xml(xml_path):
         try:
             xml_tree = XMLTree.parse(xml_path)  # 打开xml文档
             xml_root = xml_tree.getroot()  # 获得root节点
-            if pl_system().lower() == 'windows':  # windows
+            system_name = pl_system().lower()
+            if system_name == 'windows':  # windows
                 result = xml_root.find('file_path').find('win_path').text
-            elif pl_system().lower() == 'linux':  # linux
+            elif system_name == 'linux':  # linux
                 result = xml_root.find('file_path').find('linux_path').text
+            elif system_name == 'darwin':  # macOS
+                result = xml_root.find('file_path').find('macos_path').text
             else:  # other
                 result = xml_root.find('file_path').find('linux_path').text
         except Exception as e:

@@ -1,0 +1,4 @@
+请求URL: https://jsonplaceholder.typicode.com/users/1
+请求方法: GET
+请求头: {}
+请求体: 无
