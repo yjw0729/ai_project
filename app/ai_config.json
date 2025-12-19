@@ -1,8 +1,8 @@
 {
-  "use_llm": false,
-  "api_key": "sk-9f77d8bbef384426946f4df0448d7867",
-  "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
-  "model": "qwen-turbo",
+  "use_llm": true,
+  "api_key": "gpustack_25a0c35ce1cafba4_e61d767c97eb18438b5c8ea08db26936",
+  "base_url": "http://22.50.21.17:8099/v1/",
+  "model": "qwen3-32b",
   "temperature": 0.2,
   "max_tokens": 16384,
   "timeout": 600,
