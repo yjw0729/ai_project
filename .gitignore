@@ -23,7 +23,12 @@ Thumbs.db
 # Logs
 logs/
 *.log
-app*
+app_flask*
+
+
+#app
+app/
+yjw*.json
 
 # Uploads / generated data
 uploads/
