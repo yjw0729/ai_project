@@ -37,9 +37,12 @@ data/generated_cases/
 coverage.xml
 htmlcov/
 
+test/
+
 data/
 *.json
 
+README/
 
 # Distribution / packaging
 build/

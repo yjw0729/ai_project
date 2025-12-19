@@ -8,8 +8,9 @@ from common.datacase_function.contect_db import db_session
 class ApiConfigMapper:
     """ApiConfig表的数据访问类"""
 
-    def __init__(self):
+    def __init__(self, db_key : str = "default"):
         self.entity_class = ApiConfig
+        self.db_key = db_key
 
     @contextmanager
     def session_scope(self):
