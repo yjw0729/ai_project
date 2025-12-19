@@ -10,5 +10,7 @@
         <linux_path name="linux">/home/data/pytest/logs/</linux_path>
         <!--  windows下的日志文件目录  -->
         <win_path name="win">D:/pythonProject/pytest_sxp/logs/</win_path>
+        <!--  macos下的日志文件目录  -->
+        <macos_path name="macos">./logs/</macos_path>
     </file_path>
 </eqlog>

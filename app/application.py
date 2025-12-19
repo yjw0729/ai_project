@@ -1,8 +1,9 @@
-from sys import path as sys_path
-from os import path as os_path
+import sys
+import os
 
-
-sys_path.append(os_path.join(os_path.abspath('..')))
+# 添加项目根目录到Python路径
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 try:
     import sys
@@ -105,6 +106,6 @@ app.register_blueprint(test_exec_opt, url_prefix="/data_service")
 
 if __name__ == '__main__':
     app.debug = True
-    host = "172.16.46.138"
+    host = "172.16.41.17"
     print(f"服务启动成功，访问地址: http://{host}:{app_port}")
     app.run(host=host, port=app_port)

@@ -1,0 +1,4 @@
+请求URL: https://jsonplaceholder.typicode.com/users
+请求方法: POST
+请求头: {}
+请求体: {'name': 'Test User', 'email': 'test@example.com'}
