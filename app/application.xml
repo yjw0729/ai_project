@@ -11,6 +11,9 @@
         <linux_path name="linux">/home/jeq/Software/jrx/riveretech-test-utils-api/docs/identity_card_img/</linux_path>
         <!--  windows下的日志文件目录  -->
         <win_path name="win">D:/pythonProject/pytest_sxp/docs/identity_card_img/</win_path>
+        <!-- mac下文件地址 -->
+        <macos_path name="macos">./docs/identity_card_img/</macos_path>
+
     </identity_card_img>
     <!--  项目根目录  -->
     <root_path>
@@ -18,10 +21,14 @@
         <linux_path name="linux">/home/jeq/Software/sxp/pytest_sxp/</linux_path>
         <!--  windows下的 根目录  -->
         <win_path name="win">D:/pythonProject/pytest_sxp/</win_path>
+        <macos_path name="macos">./</macos_path>
+
     </root_path>
     <!--  项目启动端口  -->
     <app_port>
         <linux_path name="linux">8015</linux_path>
         <win_path name="win">8015</win_path>
+        <macos_path name="macos">8015</macos_path>
+
     </app_port>
 </app>

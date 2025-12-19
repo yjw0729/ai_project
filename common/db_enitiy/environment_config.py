@@ -12,7 +12,7 @@ Base = declarative_base()
 
 class EnvironmentConfig(Base):
     """运行环境配置表实体类"""
-    __tablename__ = 'environment_config'
+    __tablename__ = 'crosstest_environment_config'
 
     # 主键
     id = Column(Integer, primary_key=True, autoincrement=True, comment='主键ID')
