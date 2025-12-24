@@ -92,10 +92,13 @@ def generate_testcases_from_doc():
     if file.filename == "":
         return _json_error("文件名为空")
 
-    filename = secure_filename(file.filename)
-    saved_path = os.path.join(UPLOAD_DIR, filename)
+    if not file.filename or not isinstance(file.filename, str):
+        return _json_error("文件名为空或类型错误")
+    # filename = secure_filename(file.filename)
+    logging.info(f'获取到的filename{file.filename}')
+    saved_path = os.path.join(UPLOAD_DIR, file.filename)
     file.save(saved_path)
-    logger.info("【generate_from_doc 入参】payload=%s, filename=%s", payload, filename)
+    logger.info("【generate_from_doc 入参】payload=%s, filename=%s", payload, file.filename)
 
     # 解析文档获取字段和约束
     fields = []
@@ -171,7 +174,7 @@ def generate_testcases_from_doc():
         model = ai_conf.get("model") or "qwen-turbo"
         temperature = ai_conf.get("temperature", 0.2)
         max_tokens = ai_conf.get("max_tokens", 1024)
-        timeout = ai_conf.get("timeout", 600)
+        timeout = ai_conf.get("timeout", 1200)
         llm_client = OpenAILLMClient(
             api_key=api_key,
             base_url=base_url,

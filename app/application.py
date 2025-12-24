@@ -106,6 +106,6 @@ app.register_blueprint(test_exec_opt, url_prefix="/data_service")
 
 if __name__ == '__main__':
     app.debug = True
-    host = "172.16.46.138"
+    host = "192.168.0.102"
     print(f"服务启动成功，访问地址: http://{host}:{app_port}")
     app.run(host=host, port=app_port)
