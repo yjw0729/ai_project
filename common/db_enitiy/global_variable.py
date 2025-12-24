@@ -26,7 +26,7 @@ class VariableScope(enum.Enum):
 
 class GlobalVariable(Base):
     """全局变量表实体类"""
-    __tablename__ = 'global_variable'
+    __tablename__ = 'crosstest_global_variable'
 
     # 主键
     id = Column(Integer, primary_key=True, autoincrement=True, comment='主键ID')

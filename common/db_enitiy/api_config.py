@@ -20,7 +20,7 @@ class HttpMethod(enum.Enum):
 
 class ApiConfig(Base):
     """接口配置表实体类"""
-    __tablename__ = 'api_config'
+    __tablename__ = 'crosstest_api_config'
 
     # 主键
     id = Column(Integer, primary_key=True, autoincrement=True, comment='主键ID')

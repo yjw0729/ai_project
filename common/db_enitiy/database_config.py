@@ -28,7 +28,7 @@ class DbType(enum.Enum):
 
 class DatabaseConfig(Base):
     """数据库连接配置表实体类"""
-    __tablename__ = 'database_config'
+    __tablename__ = 'crosstest_database_config'
     # 主键
     id = Column(Integer, primary_key=True, autoincrement=True, comment='主键ID')
     # 基础信息

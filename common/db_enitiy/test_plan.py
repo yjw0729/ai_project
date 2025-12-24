@@ -28,7 +28,7 @@ class PlanStatus(enum.Enum):
 
 class TestPlan(Base):
     """测试计划表实体类"""
-    __tablename__ = 'test_plan'
+    __tablename__ = 'crosstest_test_plan'
 
     # 主键
     id = Column(Integer, primary_key=True, autoincrement=True, comment='主键ID')

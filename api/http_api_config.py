@@ -170,7 +170,9 @@ def create_api_config():
         except ValueError as ve:
             return json_response({"code": 400, "msg": str(ve), "data": None}, status=400)
 
-        mapper = ApiConfigMapper()
+        # 支持可选 db_key，默认还是使用 default
+        db_key = (payload.get("db_key") or request.args.get("db_key") or "default").strip()
+        mapper = ApiConfigMapper(db_key=db_key)
         duplicate = mapper.get_by_unique(module, api_path, method)
         if duplicate:
             return json_response({"code": 400, "msg": "同模块+路径+方法的接口已存在", "data": _serialize(duplicate)}, status=400)
@@ -239,7 +241,9 @@ def list_api_configs():
         if request_type:
             request_type = request_type.strip().lower()
 
-        mapper = ApiConfigMapper()
+        # 支持通过 query/body 传入 db_key，默认 default
+        db_key = (payload.get("db_key") or request.args.get("db_key") or "default").strip()
+        mapper = ApiConfigMapper(db_key=db_key)
         rows = mapper.search_configs(
             keyword=keyword.strip() if keyword else None,
             module=module.strip() if module else None,
@@ -321,7 +325,8 @@ def update_api_config(config_id: int):
         if not update_data:
             return json_response({"code": 400, "msg": "没有提供要更新的字段", "data": None}, status=400)
 
-        mapper = ApiConfigMapper()
+        db_key = (payload.get("db_key") or request.args.get("db_key") or "default").strip()
+        mapper = ApiConfigMapper(db_key=db_key)
         updated = mapper.update(config_id, update_data)
         if not updated:
             return json_response({"code": 404, "msg": "接口配置不存在", "data": None}, status=404)
@@ -338,7 +343,8 @@ def delete_api_config(config_id: int):
     """硬删除接口配置"""
     logger = current_app.logger or logging.getLogger(__name__)
     try:
-        mapper = ApiConfigMapper()
+        db_key = (request.args.get("db_key") or "default").strip()
+        mapper = ApiConfigMapper(db_key=db_key)
         success = mapper.delete(config_id)
         if not success:
             return json_response({"code": 404, "msg": "接口配置不存在", "data": None}, status=404)

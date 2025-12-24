@@ -23,7 +23,12 @@ Thumbs.db
 # Logs
 logs/
 *.log
-app*
+app_flask*
+
+
+#app
+app/
+yjw*.json
 
 # Uploads / generated data
 uploads/
@@ -37,9 +42,12 @@ data/generated_cases/
 coverage.xml
 htmlcov/
 
+test/
+
 data/
 *.json
 
+README/
 
 # Distribution / packaging
 build/
@@ -49,5 +57,12 @@ dist/
 # Environment & config secrets (keep if you want them tracked)
 .env.local
 .env.*.local
+
+
+temps/
+*.txt
+
+
+
 
 
