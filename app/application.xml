@@ -8,7 +8,7 @@
     <!--  身份证图片模板目录  -->
     <identity_card_img>
         <!--  linux下的 mock 文件模板目录  -->
-        <linux_path name="linux">/home/jeq/Software/jrx/riveretech-test-utils-api/docs/identity_card_img/</linux_path>
+        <linux_path name="linux">/home/app/opt/auantum-test/docs/identity_card_img/</linux_path>
         <!--  windows下的日志文件目录  -->
         <win_path name="win">D:/pythonProject/pytest_sxp/docs/identity_card_img/</win_path>
         <!-- mac下文件地址 -->
@@ -18,7 +18,7 @@
     <!--  项目根目录  -->
     <root_path>
         <!--  linux下的 根目录  -->
-        <linux_path name="linux">/home/jeq/Software/sxp/pytest_sxp/</linux_path>
+        <linux_path name="linux">/home/app/opt/auantum-test/</linux_path>
         <!--  windows下的 根目录  -->
         <win_path name="win">D:/pythonProject/pytest_sxp/</win_path>
         <macos_path name="macos">./</macos_path>
