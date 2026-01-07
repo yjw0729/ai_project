@@ -2,8 +2,8 @@ import json
 import os
 import tempfile
 
-from common.process_function.ai_case_generator import generate_api_test_cases
-from common.process_function.llm_client import LLMClient
+from common.llm.ai_case_generator import generate_api_test_cases
+from common.llm.llm_client import LLMClient
 
 
 class FakeLLM(LLMClient):

@@ -3,14 +3,14 @@ import logging
 from flask import Blueprint, request, jsonify, current_app
 from werkzeug.utils import secure_filename
 
-from common.process_function.doc_parser import (
+from common.llm.doc_parser import (
     parse_doc_file,
     constraints_from_fields,
     build_params_example,
 )
-from common.process_function.ai_case_generator import generate_api_test_cases
+from common.llm.ai_case_generator import generate_api_test_cases
 from utils.read_config_path.read_ai_config import load_ai_config
-from common.process_function.llm_client import OpenAILLMClient
+from common.llm.llm_client import OpenAILLMClient
 from api.http_ai_generate_cases import _load_stub_cases, _save_cases_to_db, _get_or_create_api_config
 
 doc_parser_opt = Blueprint("doc_parser_opt", __name__)
@@ -161,7 +161,7 @@ def generate_testcases_from_doc():
     # 调用generate_testcases的核心逻辑（但不走HTTP路由）
     from api.http_ai_generate_cases import _load_stub_cases, _save_cases_to_db
     from utils.read_config_path.read_ai_config import load_ai_config
-    from common.process_function.llm_client import OpenAILLMClient
+    from common.llm.llm_client import OpenAILLMClient
 
     ai_conf = load_ai_config()
     use_llm = bool(ai_conf.get("use_llm") or ai_conf.get("user_llm"))

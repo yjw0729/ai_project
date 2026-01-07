@@ -6,7 +6,7 @@ import logging
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
-from common.process_function.llm_client import LLMClient, MockLLMClient
+from common.llm.llm_client import LLMClient, MockLLMClient
 
 
 def _default_prompt_template() -> str:

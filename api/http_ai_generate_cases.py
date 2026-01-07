@@ -4,8 +4,8 @@ import logging
 from flask import Blueprint, jsonify, request, make_response, current_app
 from werkzeug.exceptions import HTTPException, BadRequest
 
-from common.process_function.ai_case_generator import generate_api_test_cases
-from common.process_function.llm_client import OpenAILLMClient
+from common.llm.ai_case_generator import generate_api_test_cases
+from common.llm.llm_client import OpenAILLMClient
 from utils.read_config_path.read_ai_config import load_ai_config
 from common.db_mapper.test_case_mapper import TestCaseMapper
 from common.db_enitiy.test_case import TestCase
