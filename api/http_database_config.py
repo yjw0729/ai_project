@@ -1,6 +1,7 @@
 import logging
 import json
 from flask import Blueprint, request, jsonify, make_response, current_app
+from common.datacase_function.contect_db import test_connection, get_connection_status
 from werkzeug.exceptions import BadRequest, HTTPException
 
 from common.db_mapper.database_config_mapper import DatabaseConfigMapper
@@ -300,4 +301,141 @@ def delete_database_config(config_id: int):
         logger = current_app.logger or logging.getLogger(__name__)
         logger.exception("【删除数据库配置】服务器内部错误")
         return json_response({"code": 500, "msg": f"删除失败: {e}", "data": None}, status=500)
+
+
+@db_config_opt.route("/database/connection/status", methods=["GET"])
+def get_database_connection_status():
+    """
+    获取数据库连接状态
+    支持参数：
+    - db_key: 数据库配置键名，默认 "default"
+    """
+    try:
+        logger = current_app.logger or logging.getLogger(__name__)
+
+        # 获取参数
+        db_key = request.args.get("db_key", "default")
+
+        logger.info("【数据库连接状态】检查 db_key=%s", db_key)
+
+        # 获取连接状态
+        status = get_connection_status(db_key)
+
+        # 测试连接
+        connection_ok = test_connection(db_key)
+
+        result = {
+            "db_key": db_key,
+            "connection_status": "正常" if connection_ok else "异常",
+            "pool_info": {
+                "pool_size": status.get("pool_size", 0),
+                "checked_out": status.get("checked_out", 0),
+                "checked_in": status.get("checked_in", 0),
+                "invalid_count": status.get("invalid", 0)
+            },
+            "last_test_time": status.get("timestamp", None),
+            "error_message": None if connection_ok else status.get("error", "未知错误")
+        }
+
+        logger.info("【数据库连接状态】db_key=%s, status=%s, pool=%s/%s",
+                   db_key, result["connection_status"],
+                   result["pool_info"]["checked_out"], result["pool_info"]["pool_size"])
+
+        return json_response({
+            "code": 200,
+            "msg": "查询成功",
+            "data": result
+        }, status=200)
+
+    except Exception as e:
+        logger = current_app.logger or logging.getLogger(__name__)
+        logger.exception("【数据库连接状态】服务器内部错误")
+        return json_response({"code": 500, "msg": f"查询失败: {e}", "data": None}, status=500)
+
+
+@db_config_opt.route("/database/connection/test", methods=["POST"])
+def test_database_connection():
+    """
+    测试数据库连接
+    请求体JSON：
+    {
+        "db_key": "default",  // 可选，默认 "default"
+        "host": "localhost",   // 可选，用于临时测试
+        "port": 3306,         // 可选
+        "database_name": "test", // 可选
+        "username": "root",   // 可选
+        "password": "password" // 可选
+    }
+    """
+    try:
+        logger = current_app.logger or logging.getLogger(__name__)
+        payload = request.get_json(force=True, silent=False) or {}
+
+        db_key = payload.get("db_key", "default")
+
+        # 如果提供了连接参数，则进行临时连接测试
+        if any(key in payload for key in ["host", "port", "database_name", "username", "password"]):
+            # 临时连接测试
+            from sqlalchemy import create_engine
+            from urllib.parse import quote_plus
+
+            host = payload.get("host", "localhost")
+            port = payload.get("port", 3306)
+            database_name = payload.get("database_name", "")
+            username = payload.get("username", "")
+            password = payload.get("password", "")
+
+            connection_string = f"mysql+pymysql://{username}:{quote_plus(password)}@{host}:{port}/{database_name}"
+
+            try:
+                engine = create_engine(connection_string, connect_args={'connect_timeout': 5})
+                with engine.connect() as conn:
+                    result = conn.execute("SELECT 1 as test")
+                    row = result.fetchone()
+                    success = row is not None and row[0] == 1
+
+                return json_response({
+                    "code": 200,
+                    "msg": "连接测试成功" if success else "连接测试失败",
+                    "data": {
+                        "connection_success": success,
+                        "host": host,
+                        "port": port,
+                        "database": database_name
+                    }
+                }, status=200)
+
+            except Exception as e:
+                logger.error("【数据库连接测试】临时连接失败: %s", e)
+                return json_response({
+                    "code": 200,
+                    "msg": "连接测试失败",
+                    "data": {
+                        "connection_success": False,
+                        "error": str(e),
+                        "host": host,
+                        "port": port,
+                        "database": database_name
+                    }
+                }, status=200)
+
+        else:
+            # 测试配置的数据库连接
+            connection_ok = test_connection(db_key)
+
+            return json_response({
+                "code": 200,
+                "msg": "连接测试完成",
+                "data": {
+                    "db_key": db_key,
+                    "connection_success": connection_ok
+                }
+            }, status=200)
+
+    except BadRequest as bad_req:
+        return json_response({"code": 400, "msg": f"请求体不是合法JSON: {bad_req.description}", "data": None}, status=400)
+    except Exception as e:
+        logger = current_app.logger or logging.getLogger(__name__)
+        logger.exception("【数据库连接测试】服务器内部错误")
+        return json_response({"code": 500, "msg": f"测试失败: {e}", "data": None}, status=500)
 
