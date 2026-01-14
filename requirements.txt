@@ -8,3 +8,40 @@ gevent>=24.2.1
 sqlalchemy>=2.0.44
 flask>=3.0.3
 pymysql>=1.1.2
+
+# 核心依赖
+pydantic>=2.0.0
+python-dotenv>=1.0.0
+loguru>=0.7.0
+
+# 文档处理
+langchain>=0.0.200
+langchain-community>=0.0.10
+tiktoken>=0.5.0
+python-docx>=0.8.11
+PyPDF2>=3.0.0
+markdown>=3.5.0
+beautifulsoup4>=4.12.0
+PyYAML>=6.0
+
+# 向量数据库
+pymilvus>=2.3.0
+google-cloud-aiplatform>=1.36.0
+qdrant-client>=1.6.0
+chromadb>=0.4.0
+
+# Embedding模型
+dashscope>=1.14.0  # 通义千问
+openai>=1.3.0
+sentence-transformers>=2.2.0
+
+# 异步处理
+aiohttp>=3.9.0
+asyncio>=3.4.3
+
+# 工具
+APScheduler>=3.10.0
+redis>=5.0.0
+pandas>=2.0.0
+numpy>=1.24.0
+scikit-learn>=1.3.0

@@ -33,6 +33,7 @@ if __name__ == '__main__':
         server_address = (server_config['server'], int(application.app_port))
         http_server = WSGIServer(server_address, application.app)
         print(f'启动成功，访问地址为: http://{server_config["server"]}:{application.app_port}')
+        print('生产模式启动 - 查看日志文件获取详细状态信息')
         http_server.serve_forever()
     except Exception as e:
         print(f'启动失败: {e}')
@@ -41,4 +42,5 @@ if __name__ == '__main__':
         server_address = ('127.0.0.1', int(application.app_port))
         http_server = WSGIServer(server_address, application.app)
         print(f'启动成功，访问地址为: http://127.0.0.1:{application.app_port}')
+        print('生产模式启动 - 查看日志文件获取详细状态信息')
         http_server.serve_forever()
