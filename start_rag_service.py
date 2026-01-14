@@ -123,7 +123,6 @@ def show_usage_guide():
     print("   curl http://localhost:8080/rag_service/health")
     print()
     print("📚 详细文档: RAG_API_GUIDE.md")
-    print("🧪 测试脚本: python test_rag_api.py")
     print("="*60)
 
 def main():
