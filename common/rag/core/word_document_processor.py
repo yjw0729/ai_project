@@ -435,3 +435,4 @@ def process_product_design_document(file_path: str, metadata: Dict[str, Any] = N
     """
     processor = WordDocumentProcessor()
     return processor.process_word_document(file_path, metadata or {})
+

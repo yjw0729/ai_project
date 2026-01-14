@@ -1,0 +1,16 @@
+<?xml version="1.0" ?>
+<eqlog>
+    <!--  配置文件名称  -->
+    <file_name name="name">eqlog.xml</file_name>
+    <!--  配置文件目录  -->
+    <config_dir name="last_dir">eqconfig</config_dir>
+    <!--  配置文件目录  -->
+    <file_path name="path">
+        <!--  linux下的日志文件目录  -->
+        <linux_path name="linux">/home/app/opt/auantum-test/logs/</linux_path>
+        <!--  windows下的日志文件目录  -->
+        <win_path name="win">D:/pythonProject/pytest_sxp/logs/</win_path>
+        <!--  macos下的日志文件目录  -->
+        <macos_path name="macos">./logs/</macos_path>
+    </file_path>
+</eqlog>

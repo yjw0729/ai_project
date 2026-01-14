@@ -26,8 +26,10 @@ logs/
 app_flask*
 
 
-#app
+#app (exclude config templates)
 app/
+!app/config/
+app/config/__pycache__/
 yjw*.json
 
 # Uploads / generated data

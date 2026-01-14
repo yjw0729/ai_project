@@ -1,0 +1,12 @@
+{
+  "use_llm": true,
+  "api_key": "sk-9f77d8bbef384426946f4df0448d7867",
+  "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+  "model": "qwen-turbo",
+  "temperature": 0.2,
+  "max_tokens": 16384,
+  "timeout": 600,
+  "persist_to_db": true
+}
+
+

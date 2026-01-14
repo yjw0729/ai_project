@@ -16,8 +16,7 @@ class DatabaseConnector(BaseConnector):
     def __init__(self, config: Dict[str, Any] = None):
         super().__init__(config)
         self.db_client = None
-        self.db_type = None
-        # 延迟初始化，collect时再连接
+        self._init_database_client()
 
     def _init_database_client(self):
         """初始化数据库客户端"""
@@ -92,10 +91,6 @@ class DatabaseConnector(BaseConnector):
         Returns:
             文档列表
         """
-        # 延迟初始化数据库连接
-        if self.db_client is None:
-            self._init_database_client()
-
         tables = source_config.get('tables', [])
         queries = source_config.get('queries', [])
         collections = source_config.get('collections', [])

@@ -495,3 +495,4 @@ def health_check():
                 "timestamp": datetime.now().isoformat()
             }
         }), 500
+
