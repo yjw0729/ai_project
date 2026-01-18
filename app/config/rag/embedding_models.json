@@ -1,0 +1,61 @@
+{
+  "default": {
+    "provider": "tongyi",
+    "model": "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
+    "dimension": 768
+  },
+  "by_document_type": {
+    "product_requirement": {
+      "provider": "tongyi",
+      "model": "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
+      "dimension": 768,
+      "description": "通用需求文档，使用多语言模型"
+    },
+    "design_document": {
+      "provider": "tongyi",
+      "model": "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
+      "dimension": 768,
+      "description": "设计文档，使用多语言模型"
+    },
+    "api_documentation": {
+      "provider": "tongyi",
+      "model": "text-embedding-v2",
+      "dimension": 1536,
+      "description": "API文档，使用通义千问专用模型，更适合技术文档"
+    },
+    "technical_specification": {
+      "provider": "tongyi",
+      "model": "text-embedding-v2",
+      "dimension": 1536,
+      "description": "技术规范，使用通义千问专用模型"
+    },
+    "test_case": {
+      "provider": "tongyi",
+      "model": "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
+      "dimension": 768,
+      "description": "测试用例，使用通用模型"
+    },
+    "bug_report": {
+      "provider": "tongyi",
+      "model": "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
+      "dimension": 768,
+      "description": "缺陷报告，使用通用模型"
+    }
+  },
+  "custom_models": {
+    "code_aware": {
+      "provider": "huggingface",
+      "model": "microsoft/codebert-base",
+      "dimension": 768,
+      "description": "代码感知模型，适合包含代码片段的文档"
+    },
+    "multilingual_large": {
+      "provider": "tongyi",
+      "model": "text-embedding-v3",
+      "dimension": 2048,
+      "description": "大型多语言模型，更好的语义理解"
+    }
+  }
+}
+
+

@@ -30,7 +30,6 @@ app_flask*
 app/
 !app/config/
 app/config/__pycache__/
-yjw*.json
 
 # Uploads / generated data
 uploads/

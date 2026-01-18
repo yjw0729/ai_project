@@ -5,7 +5,7 @@ from typing import List, Dict, Any, Optional
 from datetime import datetime
 import json
 
-from common.rag.core.models import Document,DocumentType
+from common.rag.core.models import Document, DocumentType, BusinessModule
 
 
 class BaseConnector(ABC):
@@ -76,16 +76,25 @@ class BaseConnector(ABC):
             "content_hash": hashlib.md5(content.encode()).hexdigest()
         }
 
+        # 处理业务模块
+        business_module = None
+        if metadata and 'business_module' in metadata:
+            try:
+                business_module = BusinessModule(metadata['business_module'])
+            except ValueError:
+                self.logger.warning(f"无效的业务模块: {metadata['business_module']}")
+
         #合并用户元数据
         if metadata:
             base_metadata.update(metadata)
 
         return Document(
-            id= doc_id,
+            id=doc_id,
             content=content,
             source_type=source_type,
             source_uri=source_uri,
             doc_type=doc_type,
+            business_module=business_module,
             metadata=base_metadata
         )
 

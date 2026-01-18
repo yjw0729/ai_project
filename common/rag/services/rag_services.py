@@ -30,6 +30,9 @@ class RAGService:
         self.rag_config = self.config_manager.get_rag_config()
         self.vector_db_config = self.config_manager.get_vector_db_config()
 
+        # 加载业务模块配置
+        self.business_modules_config = self._load_business_modules_config(config_dir)
+
         # 初始化知识库
         self.knowledge_base = KnowledgeBase(config_dir)
 
@@ -47,6 +50,7 @@ class RAGService:
         logger.info(f"   🧠 Embedding模型: {self.rag_config.embedding_provider}/{self.rag_config.embedding_model}")
         logger.info(f"   💬 LLM模型: {self.rag_config.llm_provider}/{self.rag_config.llm_model}")
         logger.info(f"   📁 缓存目录: {self.cache_dir.absolute()}")
+        logger.info(f"   🏢 业务模块: {len(self.business_modules_config.get('modules', {}))} 个已配置")
         logger.info("="*50)
         logger.info("✅ RAG服务初始化完成")
 
@@ -68,8 +72,40 @@ class RAGService:
 
         except Exception as e:
             logger.error(f"初始化LLM客户端失败: {e}")
-            logger.warning("将使用模拟客户端")
-            return self._init_mock_client()
+        logger.warning("将使用模拟客户端")
+        return self._init_mock_client()
+
+    def _load_business_modules_config(self, config_dir: str) -> Dict[str, Any]:
+        """加载业务模块配置"""
+        config_path = os.path.join(config_dir, "rag", "business_modules.json")
+        try:
+            with open(config_path, 'r', encoding='utf-8') as f:
+                config = json.load(f)
+                logger.info(f"加载业务模块配置成功，共 {len(config.get('modules', {}))} 个模块")
+                return config
+        except Exception as e:
+            logger.warning(f"加载业务模块配置文件失败: {e}, 使用默认配置")
+            return {
+                "modules": {},
+                "categories": {},
+                "settings": {
+                    "allow_custom_modules": False,
+                    "default_module": None,
+                    "require_module_specification": False
+                }
+            }
+
+    def get_business_modules(self) -> Dict[str, Any]:
+        """获取所有可用的业务模块"""
+        return self.business_modules_config.get("modules", {})
+
+    def validate_business_module(self, module_key: str) -> bool:
+        """验证业务模块是否存在且启用"""
+        modules = self.business_modules_config.get("modules", {})
+        module_config = modules.get(module_key)
+        if not module_config:
+            return False
+        return module_config.get("enabled", False)
 
     def _init_tongyi_client(self):
         """初始化通义千问客户端"""
@@ -205,6 +241,7 @@ class RAGService:
             top_k: int = None,
             temperature: float = None,
             max_tokens: int = None,
+            filters: Dict[str, Any] = None,
             use_cache: bool = True
     ) -> Dict[str, Any]:
         """
@@ -216,6 +253,7 @@ class RAGService:
             top_k: 检索结果数量
             temperature: LLM温度
             max_tokens: 最大token数
+            filters: 过滤条件 (如 {"business_module": "cross_border_opening"})
             use_cache: 是否使用缓存
 
         Returns:
@@ -241,7 +279,8 @@ class RAGService:
             search_results = await self.knowledge_base.search(
                 query=question,
                 collection_name=collection_name,
-                top_k=top_k or self.rag_config.top_k
+                top_k=top_k or self.rag_config.top_k,
+                filters=filters
             )
 
             if not search_results:

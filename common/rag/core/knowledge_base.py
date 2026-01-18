@@ -198,7 +198,8 @@ class KnowledgeBase:
             query: str,
             collection_name: str = None,
             top_k: int = None,
-            score_threshold: float = None
+            score_threshold: float = None,
+            filters: Dict[str, Any] = None
     ) -> List[Tuple[DocumentChunk, float]]:
         """
         搜索知识库
@@ -208,12 +209,13 @@ class KnowledgeBase:
             collection_name: 集合名称
             top_k: 返回数量
             score_threshold: 相似度阈值
+            filters: 过滤条件 (如 {"business_module": "cross_border_opening"})
 
         Returns:
             相关文档块列表
         """
         try:
-            logger.info(f"搜索查询: {query}")
+            logger.info(f"搜索查询: {query}, 过滤条件: {filters}")
 
             # 使用配置值或参数值
             top_k = top_k or self.rag_config.top_k
@@ -222,7 +224,8 @@ class KnowledgeBase:
             results = await self.vector_indexer.search_similar(
                 query=query,
                 top_k=top_k,
-                score_threshold=score_threshold
+                score_threshold=score_threshold,
+                filters=filters
             )
 
             logger.info(f"搜索完成: 找到 {len(results)} 个相关结果")

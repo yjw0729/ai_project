@@ -15,6 +15,14 @@ class DocumentType(Enum):
     BUG_REPORT = "bug_report"
 
 
+class BusinessModule(Enum):
+    '''业务模块枚举'''
+    CROSS_BORDER_OPENING = "cross_border_opening"      # 跨境-开户
+    CROSS_BORDER_TRADING = "cross_border_trading"      # 跨境-交易
+    INTERNET_OPENING = "internet_opening"              # 互联网-开户
+    INTERNET_TRADING = "internet_trading"              # 互联网-交易
+
+
 @dataclass
 class Document:
     """文档基类"""
@@ -23,6 +31,7 @@ class Document:
     source_type: str = "unknown"
     source_uri: str = ""
     doc_type: Optional[DocumentType] = None
+    business_module: Optional[BusinessModule] = None
     metadata: Dict[str, Any] = field(default_factory=dict)
     created_at: datetime = field(default_factory=datetime.now)
     updated_at: datetime = field(default_factory=datetime.now)
@@ -35,6 +44,7 @@ class Document:
             "source_type": self.source_type,
             "source_uri": self.source_uri,
             "doc_type": self.doc_type,
+            "business_module": self.business_module,
             "metadata": self.metadata,
             "created_at": self.created_at.isoformat(),
             "updated_at": self.updated_at.isoformat()

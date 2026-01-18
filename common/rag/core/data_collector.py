@@ -33,7 +33,7 @@ class DataCollector:
         # self.connectors["database"] = None  # 将在collect_from_source时初始化
 
         # Git连接器（如果需要）
-        # if "git" in self.config:
+        # if "git" in self.conf ig:
         #     from app.connectors.git_connector import GitConnector
         #     self.connectors["git"] = GitConnector(self.config["git"])
 

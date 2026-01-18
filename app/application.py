@@ -264,6 +264,6 @@ init_system_status()
 
 if __name__ == '__main__':
     app.debug = True
-    host = "172.16.46.138"
+    host = "172.20.10.4"
     print(f"服务启动成功，访问地址: http://{host}:{app_port}")
     app.run(host=host, port=app_port)

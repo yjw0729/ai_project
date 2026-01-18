@@ -33,31 +33,66 @@ class VectorIndexer:
         self.rag_config = config_manager.get_rag_config()
         self.embedding_client = embedding_client
         self.vector_store = None
+
+        # 加载embedding模型配置
+        self.embedding_models_config = self._load_embedding_models_config()
+
         self._init_vector_store()
 
-        logger.info(f"向量索引器初始化: db_type={self.config.db_type}, model={self.rag_config.embedding_model}")
+        logger.info(f"向量索引器初始化: db_type={self.config.db_type}, default_model={self.rag_config.embedding_model}")
+        logger.info(f"支持多文档类型向量化，共{len(self.embedding_models_config.get('by_document_type', {}))}种配置")
+
+    def _load_embedding_models_config(self) -> Dict[str, Any]:
+        """加载embedding模型配置"""
+        config_path = os.path.join(os.path.dirname(self.config.__file__) if hasattr(self.config, '__file__') else "app/config/rag", "embedding_models.json")
+        try:
+            with open(config_path, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except Exception as e:
+            logger.warning(f"加载embedding模型配置文件失败: {e}, 使用默认配置")
+            return {
+                "default": {
+                    "provider": self.rag_config.embedding_provider,
+                    "model": self.rag_config.embedding_model,
+                    "dimension": self.config.dimension
+                }
+            }
+
+    def _get_embedding_config_for_document(self, doc_type: str = None) -> Dict[str, Any]:
+        """根据文档类型获取对应的embedding配置"""
+        if not doc_type:
+            return self.embedding_models_config.get("default", {
+                "provider": self.rag_config.embedding_provider,
+                "model": self.rag_config.embedding_model,
+                "dimension": self.config.dimension
+            })
+
+        # 尝试从by_document_type配置中查找
+        doc_config = self.embedding_models_config.get("by_document_type", {}).get(doc_type)
+        if doc_config:
+            return doc_config
+
+        # 如果没找到，使用默认配置
+        logger.info(f"文档类型 '{doc_type}' 未找到专用embedding配置，使用默认配置")
+        return self.embedding_models_config.get("default", {
+            "provider": self.rag_config.embedding_provider,
+            "model": self.rag_config.embedding_model,
+            "dimension": self.config.dimension
+        })
 
     def _init_vector_store(self):
         """初始化向量存储"""
         db_type = self.config.db_type.lower()
 
         try:
-            if db_type == "milvus":
-                self._init_milvus()
-            elif db_type == "chroma":
+            if db_type == "chroma":
                 self._init_chroma()
-            elif db_type == "qdrant":
-                self._init_qdrant()
-            elif db_type == "google_cloud" or db_type == "gcp":
-                self._init_google_cloud()
-            elif db_type == "pinecone":
-                self._init_pinecone()
             elif db_type == "memory":
                 self._init_memory_store()
             else:
-                logger.warning(f"不支持的向量数据库类型: {db_type}, 将使用内存存储作为默认")
-                self.config.db_type = "memory"
-                self._init_memory_store()
+                logger.warning(f"不支持的向量数据库类型: {db_type}, 将使用ChromaDB作为默认")
+                self.config.db_type = "chroma"
+                self._init_chroma()
 
         except ImportError as e:
             logger.error(f"导入向量数据库包失败: {e}")
@@ -79,81 +114,6 @@ class VectorIndexer:
             except Exception as fallback_e:
                 logger.error(f"内存存储fallback也失败: {fallback_e}")
                 raise
-
-    def _init_milvus(self):
-        """初始化Milvus"""
-        try:
-            from pymilvus import connections, Collection, utility
-
-            # 连接Milvus
-            host = self.config.host or "localhost"
-            port = self.config.port or 19530
-
-            connections.connect(
-                alias="default",
-                host=host,
-                port=port
-            )
-
-            logger.info(f"已连接到Milvus: {host}:{port}")
-
-            # 检查集合是否存在
-            if utility.has_collection(self.config.collection_name):
-                self.collection = Collection(self.config.collection_name)
-                logger.info(f"加载现有集合: {self.config.collection_name}")
-            else:
-                # 创建集合
-                from pymilvus import FieldSchema, CollectionSchema, DataType
-
-                fields = [
-                    FieldSchema(
-                        name="id",
-                        dtype=DataType.VARCHAR,
-                        is_primary=True,
-                        max_length=100
-                    ),
-                    FieldSchema(
-                        name="vector",
-                        dtype=DataType.FLOAT_VECTOR,
-                        dim=self.config.dimension
-                    ),
-                    FieldSchema(
-                        name="content",
-                        dtype=DataType.VARCHAR,
-                        max_length=65535
-                    ),
-                    FieldSchema(
-                        name="metadata",
-                        dtype=DataType.JSON
-                    ),
-                ]
-
-                schema = CollectionSchema(fields, description="Knowledge base collection")
-                self.collection = Collection(
-                    self.config.collection_name,
-                    schema,
-                    consistency_level="Strong"
-                )
-
-                # 创建索引
-                index_params = self.config.index_params or {
-                    "metric_type": self.config.metric_type,
-                    "index_type": "IVF_FLAT",
-                    "params": {"nlist": 1024}
-                }
-
-                self.collection.create_index(
-                    field_name="vector",
-                    index_params=index_params
-                )
-
-                logger.info(f"创建新集合: {self.config.collection_name}")
-
-            self.vector_store = self.collection
-
-        except Exception as e:
-            logger.error(f"初始化Milvus失败: {e}")
-            raise
 
     def _init_chroma(self):
         """初始化ChromaDB - 支持本地持久化和远程服务器"""
@@ -198,99 +158,6 @@ class VectorIndexer:
 
         except Exception as e:
             logger.error(f"初始化ChromaDB失败: {e}")
-            raise
-
-    def _init_qdrant(self):
-        """初始化Qdrant"""
-        try:
-            from qdrant_client import QdrantClient
-            from qdrant_client.models import Distance, VectorParams
-
-            # 配置
-            host = self.config.host or "localhost"
-            port = self.config.port or 6333
-
-            # 连接到Qdrant
-            if host and host != "localhost":
-                self.qdrant_client = QdrantClient(
-                    host=host,
-                    port=port
-                )
-            else:
-                # 本地内存模式
-                self.qdrant_client = QdrantClient(":memory:")
-
-            # 检查集合是否存在
-            collections = self.qdrant_client.get_collections().collections
-            collection_exists = any(
-                col.name == self.config.collection_name for col in collections
-            )
-
-            if not collection_exists:
-                # 创建集合
-                distance_map = {
-                    "COSINE": Distance.COSINE,
-                    "EUCLIDEAN": Distance.EUCLID,
-                    "DOT": Distance.DOT
-                }
-
-                self.qdrant_client.create_collection(
-                    collection_name=self.config.collection_name,
-                    vectors_config=VectorParams(
-                        size=self.config.dimension,
-                        distance=distance_map.get(
-                            getattr(self.config, 'metric_type', 'COSINE'),
-                            Distance.COSINE
-                        )
-                    )
-                )
-                logger.info(f"创建新Qdrant集合: {self.config.collection_name}")
-            else:
-                logger.info(f"加载现有Qdrant集合: {self.config.collection_name}")
-
-            self.vector_store = self.qdrant_client
-
-        except Exception as e:
-            logger.error(f"初始化Qdrant失败: {e}")
-            raise
-
-    def _init_pinecone(self):
-        """初始化Pinecone"""
-        try:
-            import pinecone
-
-            # 检查API密钥
-            api_key = getattr(self.config, 'api_key', None) or os.getenv('PINECONE_API_KEY')
-            if not api_key:
-                raise ValueError("需要Pinecone API密钥")
-
-            # 初始化Pinecone
-            pinecone.init(
-                api_key=api_key,
-                environment=getattr(self.config, 'environment', 'us-east-1')
-            )
-
-            # 检查索引是否存在
-            index_list = pinecone.list_indexes()
-            if self.config.collection_name not in index_list:
-                # 创建索引
-                pinecone.create_index(
-                    name=self.config.collection_name,
-                    dimension=self.config.dimension,
-                    metric=getattr(self.config, 'metric_type', 'cosine').lower(),
-                    pods=1,
-                    pod_type="p1.x1"
-                )
-                logger.info(f"创建新Pinecone索引: {self.config.collection_name}")
-
-            # 连接到索引
-            self.index = pinecone.Index(self.config.collection_name)
-            logger.info(f"已连接到Pinecone索引: {self.config.collection_name}")
-
-            self.vector_store = self.index
-
-        except Exception as e:
-            logger.error(f"初始化Pinecone失败: {e}")
             raise
 
     def _init_memory_store(self):
@@ -361,33 +228,17 @@ class VectorIndexer:
             logger.error(f"初始化内存存储失败: {e}")
             raise
 
-    def _init_google_cloud(self):
-        """初始化Google Cloud Vertex AI Vector Search"""
-        try:
-            # 简化版本，只记录日志
-            logger.info(f"Google Cloud Vector Search配置: "
-                        f"project_id={getattr(self.config, 'project_id', '未设置')}, "
-                        f"region={getattr(self.config, 'region', '未设置')}, "
-                        f"instance_id={getattr(self.config, 'instance_id', '未设置')}")
-
-            # 由于配置是Google Cloud，但可能没有实际使用，我们使用ChromaDB作为fallback
-            logger.warning("Google Cloud Vector Search需要额外配置，将使用ChromaDB作为fallback")
-            self.config.db_type = "chroma"
-            self._init_chroma()
-
-        except Exception as e:
-            logger.error(f"初始化Google Cloud失败: {e}")
-            raise
-
     async def generate_embeddings(
             self,
-            texts: List[str]
+            texts: List[str],
+            embedding_config: Dict[str, Any] = None
     ) -> List[List[float]]:
         """
         生成文本向量
 
         Args:
             texts: 文本列表
+            embedding_config: embedding配置，如果为None则使用默认配置
 
         Returns:
             向量列表
@@ -395,30 +246,34 @@ class VectorIndexer:
         if not texts:
             return []
 
+        # 如果没有指定配置，使用默认配置
+        if embedding_config is None:
+            embedding_config = self._get_embedding_config_for_document()
+
         try:
-            provider = self.rag_config.embedding_provider.lower()
-            model = self.rag_config.embedding_model
+            provider = embedding_config.get("provider", self.rag_config.embedding_provider).lower()
+            model = embedding_config.get("model", self.rag_config.embedding_model)
 
             logger.info(f"生成embedding: provider={provider}, model={model}, texts={len(texts)}")
 
             if provider == "tongyi":
-                return await self._generate_tongyi_embeddings(texts)
+                return await self._generate_tongyi_embeddings(texts, model)
             elif provider == "openai":
-                return await self._generate_openai_embeddings(texts)
+                return await self._generate_openai_embeddings(texts, model)
             elif provider == "huggingface":
-                return await self._generate_huggingface_embeddings(texts)
+                return await self._generate_huggingface_embeddings(texts, model)
             elif provider == "local":
-                return await self._generate_local_embeddings(texts)
+                return await self._generate_local_embeddings(texts, model)
             else:
                 # 默认使用sentence-transformers
-                return await self._generate_huggingface_embeddings(texts)
+                return await self._generate_huggingface_embeddings(texts, model)
 
         except Exception as e:
             logger.error(f"生成向量时出错: {e}")
             # 返回随机向量作为fallback
             return self._generate_random_vectors(len(texts))
 
-    async def _generate_tongyi_embeddings(self, texts: List[str]) -> List[List[float]]:
+    async def _generate_tongyi_embeddings(self, texts: List[str], model: str = None) -> List[List[float]]:
         """使用通义千问生成embedding"""
         try:
             import dashscope
@@ -431,6 +286,9 @@ class VectorIndexer:
 
             dashscope.api_key = api_key
 
+            # 使用指定的模型，如果没有指定则使用默认
+            model_name = model or self.rag_config.embedding_model
+
             embeddings = []
             batch_size = 25  # 通义千问API限制
 
@@ -438,7 +296,7 @@ class VectorIndexer:
                 batch = texts[i:i + batch_size]
 
                 response = TextEmbedding.call(
-                    model=self.rag_config.embedding_model,
+                    model=model_name,
                     input=batch
                 )
 
@@ -458,15 +316,17 @@ class VectorIndexer:
             logger.error(f"通义千问embedding失败: {e}")
             raise
 
-    async def _generate_openai_embeddings(self, texts: List[str]) -> List[List[float]]:
+    async def _generate_openai_embeddings(self, texts: List[str], model: str = None) -> List[List[float]]:
         """使用OpenAI生成embedding"""
         try:
             from openai import OpenAI
 
             client = OpenAI(api_key=os.getenv('OPENAI_API_KEY'))
 
+            model_name = model or self.rag_config.embedding_model
+
             response = client.embeddings.create(
-                model=self.rag_config.embedding_model,
+                model=model_name,
                 input=texts
             )
 
@@ -476,7 +336,7 @@ class VectorIndexer:
             logger.error(f"OpenAI embedding失败: {e}")
             raise
 
-    async def _generate_huggingface_embeddings(self, texts: List[str]) -> List[List[float]]:
+    async def _generate_huggingface_embeddings(self, texts: List[str], model: str = None) -> List[List[float]]:
         """使用HuggingFace生成embedding"""
         try:
             from sentence_transformers import SentenceTransformer
@@ -487,7 +347,7 @@ class VectorIndexer:
             logger.info(f"使用设备: {device}")
 
             # 加载模型
-            model_name = self.rag_config.embedding_model
+            model_name = model or self.rag_config.embedding_model
             if model_name == "text-embedding-v2":  # 默认模型
                 model_name = "sentence-transformers/all-MiniLM-L6-v2"
 
@@ -568,9 +428,11 @@ class VectorIndexer:
                 chunk_id = f"chunk_{i}_{content_hash}"
                 ids.append(chunk_id)
 
-            # 2. 生成向量
-            logger.info("生成向量中...")
-            vectors = await self.generate_embeddings(texts)
+            # 2. 生成向量（根据文档类型选择模型）
+            doc_type = chunks[0].doc_type.value if chunks[0].doc_type else None
+            embedding_config = self._get_embedding_config_for_document(doc_type)
+            logger.info(f"生成向量中... 文档类型: {doc_type}, 使用模型: {embedding_config['provider']}/{embedding_config['model']}")
+            vectors = await self.generate_embeddings(texts, embedding_config)
 
             if len(vectors) != len(chunks):
                 logger.warning(f"向量数量不匹配: 文本数={len(chunks)}, 向量数={len(vectors)}")
@@ -585,14 +447,8 @@ class VectorIndexer:
 
             # 3. 存储到向量数据库
             logger.info("存储到向量数据库...")
-            if self.config.db_type == "milvus":
-                await self._insert_to_milvus(ids, vectors, texts, metadatas, collection_name)
-            elif self.config.db_type == "chroma":
+            if self.config.db_type == "chroma":
                 await self._insert_to_chroma(ids, vectors, texts, metadatas, collection_name)
-            elif self.config.db_type == "qdrant":
-                await self._insert_to_qdrant(ids, vectors, texts, metadatas, collection_name)
-            elif self.config.db_type == "pinecone":
-                await self._insert_to_pinecone(ids, vectors, texts, metadatas, collection_name)
             elif self.config.db_type == "memory":
                 await self._insert_to_memory(ids, vectors, texts, metadatas, collection_name)
             else:
@@ -615,29 +471,6 @@ class VectorIndexer:
 
         except Exception as e:
             logger.error(f"构建索引失败: {e}")
-            raise
-
-    async def _insert_to_milvus(self, ids, vectors, texts, metadatas, collection_name):
-        """插入数据到Milvus"""
-        try:
-            # 准备实体
-            entities = [
-                ids,  # id字段
-                vectors,  # vector字段
-                texts,  # content字段
-                [json.dumps(meta, ensure_ascii=False) for meta in metadatas]  # metadata字段
-            ]
-
-            # 插入数据
-            insert_result = self.collection.insert(entities)
-
-            # 刷新数据
-            self.collection.flush()
-
-            logger.info(f"成功插入 {len(ids)} 条记录到Milvus")
-
-        except Exception as e:
-            logger.error(f"插入Milvus失败: {e}")
             raise
 
     async def _insert_to_chroma(self, ids, vectors, texts, metadatas, collection_name):
@@ -667,65 +500,6 @@ class VectorIndexer:
 
         except Exception as e:
             logger.error(f"插入ChromaDB失败: {e}")
-            raise
-
-    async def _insert_to_qdrant(self, ids, vectors, texts, metadatas, collection_name):
-        """插入数据到Qdrant"""
-        try:
-            from qdrant_client.models import PointStruct
-
-            # 准备点
-            points = []
-            for i, (id, vector, text, metadata) in enumerate(zip(ids, vectors, texts, metadatas)):
-                points.append(
-                    PointStruct(
-                        id=i,  # Qdrant需要整数ID
-                        vector=vector,
-                        payload={
-                            "content": text,
-                            "metadata": metadata,
-                            "chunk_id": id
-                        }
-                    )
-                )
-
-            # 批量插入
-            self.vector_store.upsert(
-                collection_name=collection_name,
-                points=points
-            )
-
-            logger.info(f"成功插入 {len(points)} 条记录到Qdrant")
-
-        except Exception as e:
-            logger.error(f"插入Qdrant失败: {e}")
-            raise
-
-    async def _insert_to_pinecone(self, ids, vectors, texts, metadatas, collection_name):
-        """插入数据到Pinecone"""
-        try:
-            # 准备向量
-            pinecone_vectors = []
-            for id, vector, text, metadata in zip(ids, vectors, texts, metadatas):
-                pinecone_vectors.append({
-                    "id": id,
-                    "values": vector,
-                    "metadata": {
-                        "content": text[:1000],  # 限制内容长度
-                        **{k: str(v) for k, v in metadata.items() if v is not None}
-                    }
-                })
-
-            # 批量插入
-            self.vector_store.upsert(
-                vectors=pinecone_vectors,
-                namespace=collection_name
-            )
-
-            logger.info(f"成功插入 {len(pinecone_vectors)} 条记录到Pinecone")
-
-        except Exception as e:
-            logger.error(f"插入Pinecone失败: {e}")
             raise
 
     async def _insert_to_memory(self, ids, vectors, texts, metadatas, collection_name):
@@ -759,7 +533,8 @@ class VectorIndexer:
             self,
             query: str,
             top_k: int = None,
-            score_threshold: float = None
+            score_threshold: float = None,
+            filters: Dict[str, Any] = None
     ) -> List[Tuple[DocumentChunk, float]]:
         """
         相似度搜索
@@ -768,6 +543,7 @@ class VectorIndexer:
             query: 查询文本
             top_k: 返回结果数量
             score_threshold: 相似度阈值
+            filters: 过滤条件 (如 {"business_module": "cross_border_opening"})
 
         Returns:
             (文档块, 相似度得分) 列表
@@ -792,25 +568,49 @@ class VectorIndexer:
 
             # 2. 执行搜索
             results = []
-            if self.config.db_type == "milvus":
-                results = await self._search_milvus(query_vector, top_k, score_threshold)
-            elif self.config.db_type == "chroma":
+            if self.config.db_type == "chroma":
                 results = await self._search_chroma(query_vector, top_k, score_threshold)
-            elif self.config.db_type == "qdrant":
-                results = await self._search_qdrant(query_vector, top_k, score_threshold)
-            elif self.config.db_type == "pinecone":
-                results = await self._search_pinecone(query_vector, top_k, score_threshold)
             elif self.config.db_type == "memory":
                 results = await self._search_memory(query_vector, top_k, score_threshold)
             else:
                 # 默认使用ChromaDB
                 results = await self._search_chroma(query_vector, top_k, score_threshold)
 
-            # 3. 过滤阈值
-            filtered_results = [
-                (chunk, score) for chunk, score in results
-                if score >= score_threshold
-            ]
+            # 3. 应用过滤条件
+            filtered_results = []
+            for chunk, score in results:
+                # 相似度阈值过滤
+                if score < score_threshold:
+                    continue
+
+                # 业务过滤条件
+                if filters:
+                    should_include = True
+                    metadata = chunk.metadata or {}
+
+                    for filter_key, filter_value in filters.items():
+                        if filter_key == 'business_module':
+                            chunk_business_module = metadata.get('business_module')
+                            if chunk_business_module != filter_value:
+                                should_include = False
+                                break
+                        elif filter_key == 'document_type':
+                            chunk_doc_type = metadata.get('document_type')
+                            if chunk_doc_type != filter_value:
+                                should_include = False
+                                break
+                        elif filter_key == 'tags':
+                            chunk_tags = metadata.get('tags', [])
+                            if not isinstance(filter_value, list):
+                                filter_value = [filter_value]
+                            if not any(tag in chunk_tags for tag in filter_value):
+                                should_include = False
+                                break
+
+                    if not should_include:
+                        continue
+
+                filtered_results.append((chunk, score))
 
             elapsed = (datetime.now() - start_time).total_seconds()
             logger.info(f"搜索完成: 找到 {len(filtered_results)} 个结果, 耗时 {elapsed:.3f}秒")
@@ -819,48 +619,6 @@ class VectorIndexer:
 
         except Exception as e:
             logger.error(f"搜索失败: {e}")
-            return []
-
-    async def _search_milvus(self, query_vector, top_k, score_threshold):
-        """在Milvus中搜索"""
-        try:
-            search_params = getattr(self.config, 'search_params', {
-                "metric_type": getattr(self.config, 'metric_type', 'L2'),
-                "params": {"nprobe": 10}
-            })
-
-            # 执行搜索
-            search_result = self.collection.search(
-                data=[query_vector],
-                anns_field="vector",
-                param=search_params,
-                limit=top_k * 2,  # 多取一些用于过滤
-                output_fields=["content", "metadata"]
-            )
-
-            # 解析结果
-            results = []
-            for hits in search_result:
-                for hit in hits:
-                    score = hit.score
-                    metadata_str = hit.entity.get("metadata")
-                    content = hit.entity.get("content")
-
-                    if metadata_str and content:
-                        try:
-                            metadata = json.loads(metadata_str)
-                            chunk = DocumentChunk(
-                                content=content,
-                                metadata=metadata
-                            )
-                            results.append((chunk, score))
-                        except:
-                            continue
-
-            return results
-
-        except Exception as e:
-            logger.error(f"Milvus搜索失败: {e}")
             return []
 
     async def _search_chroma(self, query_vector, top_k, score_threshold):
@@ -897,62 +655,6 @@ class VectorIndexer:
             logger.error(f"ChromaDB搜索失败: {e}")
             return []
 
-    async def _search_qdrant(self, query_vector, top_k, score_threshold):
-        """在Qdrant中搜索"""
-        try:
-            from qdrant_client.models import Filter, FieldCondition, MatchValue
-
-            # 执行搜索
-            search_result = self.vector_store.search(
-                collection_name=self.config.collection_name,
-                query_vector=query_vector,
-                limit=top_k * 2
-            )
-
-            # 解析结果
-            results = []
-            for hit in search_result:
-                payload = hit.payload
-                if payload:
-                    chunk = DocumentChunk(
-                        content=payload.get("content", ""),
-                        metadata=payload.get("metadata", {})
-                    )
-                    results.append((chunk, hit.score))
-
-            return results
-
-        except Exception as e:
-            logger.error(f"Qdrant搜索失败: {e}")
-            return []
-
-    async def _search_pinecone(self, query_vector, top_k, score_threshold):
-        """在Pinecone中搜索"""
-        try:
-            # 执行搜索
-            search_result = self.vector_store.query(
-                vector=query_vector,
-                top_k=top_k * 2,
-                include_metadata=True
-            )
-
-            # 解析结果
-            results = []
-            for match in search_result.matches:
-                metadata = match.metadata
-                if metadata:
-                    chunk = DocumentChunk(
-                        content=metadata.get("content", ""),
-                        metadata=metadata
-                    )
-                    results.append((chunk, match.score))
-
-            return results
-
-        except Exception as e:
-            logger.error(f"Pinecone搜索失败: {e}")
-            return []
-
     async def _search_memory(self, query_vector, top_k, score_threshold):
         """在内存存储中搜索"""
         try:
@@ -981,25 +683,12 @@ class VectorIndexer:
         collection_name = collection_name or self.config.collection_name
 
         try:
-            if self.config.db_type == "milvus":
-                from pymilvus import utility
-
-                if utility.has_collection(collection_name):
-                    utility.drop_collection(collection_name)
-                    logger.info(f"已删除Milvus集合: {collection_name}")
-
-            elif self.config.db_type == "chroma":
+            if self.config.db_type == "chroma":
                 self.chroma_client.delete_collection(name=collection_name)
                 logger.info(f"已删除ChromaDB集合: {collection_name}")
-
-            elif self.config.db_type == "qdrant":
-                self.vector_store.delete_collection(collection_name=collection_name)
-                logger.info(f"已删除Qdrant集合: {collection_name}")
-
-            elif self.config.db_type == "pinecone":
-                import pinecone
-                pinecone.delete_index(collection_name)
-                logger.info(f"已删除Pinecone索引: {collection_name}")
+            elif self.config.db_type == "memory":
+                # 内存存储不支持删除操作
+                logger.info(f"内存存储不支持删除集合: {collection_name}")
 
         except Exception as e:
             logger.error(f"删除集合失败: {e}")
@@ -1012,34 +701,18 @@ class VectorIndexer:
         try:
             stats = {}
 
-            if self.config.db_type == "milvus":
-                from pymilvus import utility
-
-                if not utility.has_collection(collection_name):
-                    return {"error": f"集合 {collection_name} 不存在"}
-
-                collection = self.collection
-                stats = {
-                    "collection_name": collection_name,
-                    "num_entities": collection.num_entities,
-                }
-
-            elif self.config.db_type == "chroma":
+            if self.config.db_type == "chroma":
                 count = self.collection.count()
                 stats = {
                     "collection_name": collection_name,
                     "num_entities": count
                 }
-
-            elif self.config.db_type == "qdrant":
-                collections = self.vector_store.get_collections().collections
-                for col in collections:
-                    if col.name == collection_name:
-                        stats = {
-                            "collection_name": collection_name,
-                            "num_entities": col.points_count
-                        }
-                        break
+            elif self.config.db_type == "memory":
+                # 内存存储没有持久化统计信息
+                stats = {
+                    "collection_name": collection_name,
+                    "num_entities": "unknown (内存存储)"
+                }
 
             return stats
 

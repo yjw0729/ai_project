@@ -1,0 +1,49 @@
+{
+  "modules": {
+    "cross_border_opening": {
+      "name": "跨境开户",
+      "description": "跨境业务开户相关文档",
+      "category": "cross_border",
+      "sub_category": "opening",
+      "enabled": true
+    },
+    "cross_border_trading": {
+      "name": "跨境交易",
+      "description": "跨境业务交易相关文档",
+      "category": "cross_border",
+      "sub_category": "trading",
+      "enabled": true
+    },
+    "internet_opening": {
+      "name": "互联网开户",
+      "description": "互联网业务开户相关文档",
+      "category": "internet",
+      "sub_category": "opening",
+      "enabled": true
+    },
+    "internet_trading": {
+      "name": "互联网交易",
+      "description": "互联网业务交易相关文档",
+      "category": "internet",
+      "sub_category": "trading",
+      "enabled": true
+    }
+  },
+  "categories": {
+    "cross_border": {
+      "name": "跨境业务",
+      "description": "跨境相关业务模块"
+    },
+    "internet": {
+      "name": "互联网业务",
+      "description": "互联网相关业务模块"
+    }
+  },
+  "settings": {
+    "allow_custom_modules": false,
+    "default_module": null,
+    "require_module_specification": true
+  }
+}
+
+
