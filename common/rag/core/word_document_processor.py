@@ -22,7 +22,7 @@ class DocumentSection:
     content: str
     level: int  # 标题级别 (1-6)
     start_pos: int
-    end_pos: int
+    end_pos: int = 0  # 添加默认值
     parent: Optional['DocumentSection'] = None
     children: List['DocumentSection'] = None
 

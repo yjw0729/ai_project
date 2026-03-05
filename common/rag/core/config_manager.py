@@ -54,6 +54,7 @@ class VectorDBConfig:
     enable_cache: bool = True
     cache_size: int = 1000
     enable_monitoring: bool = False
+    fallback_to_memory: bool = True
 
 
 class ConfigManager:
@@ -61,9 +62,16 @@ class ConfigManager:
         self.config_dir = Path(config_dir) if isinstance(config_dir, str) else config_dir
         self.rag_config = None
         self.vector_db_config = None
+        self.api_key = None  # 从ai_config.json加载
 
     def load_configs(self):
         '''加载配置'''
+        # 先加载ai_config.json获取api_key
+        ai_config_path = self.config_dir / "app" / "ai_config.json"
+        if ai_config_path.exists():
+            with open(ai_config_path, 'r', encoding='utf-8') as f:
+                ai_data = json.load(f)
+                self.api_key = ai_data.get('api_key')
         rag_config_path = self.config_dir / "rag" / "rag.json"
         if rag_config_path.exists():
             with open(rag_config_path, 'r', encoding='utf-8') as f:

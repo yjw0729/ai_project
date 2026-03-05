@@ -43,10 +43,34 @@ def get_rag_service():
     global rag_service
     if rag_service is None and RAGService is not None:
         try:
-            rag_service = RAGService()
+            import os
+            # 获取项目根目录
+            # 尝试多种可能的配置目录
+            base_dirs = [
+                os.path.dirname(os.path.dirname(os.path.abspath(__file__))),  # api目录的父目录
+                os.getcwd(),  # 当前工作目录
+            ]
+            
+            config_dir = None
+            for base_dir in base_dirs:
+                test_path = os.path.join(base_dir, "app", "config", "rag", "business_modules.json")
+                if os.path.exists(test_path):
+                    config_dir = os.path.join(base_dir, "app", "config")
+                    print(f"[DEBUG] 找到配置目录: {config_dir}")
+                    break
+            
+            if config_dir is None:
+                # 使用绝对路径的兜底方案
+                config_dir = os.path.abspath("app/config")
+                print(f"[DEBUG] 使用默认配置目录: {config_dir}")
+            
+            rag_service = RAGService(config_dir=config_dir)
+            print(f"[DEBUG] RAG服务初始化成功，业务模块: {list(rag_service.get_business_modules().keys())}")
             current_app.logger.info("RAG服务初始化成功")
         except Exception as e:
             current_app.logger.error(f"RAG服务初始化失败: {e}")
+            import traceback
+            current_app.logger.error(traceback.format_exc())
             return None
     return rag_service
 
@@ -144,8 +168,9 @@ def upload_document():
         # 生成文档ID
         document_id = str(uuid.uuid4())
 
-        # 获取其他参数
-        collection_name = request.form.get('collection_name', 'documents')
+        # 获取其他参数（默认使用当前RAG配置中的集合名称）
+        default_collection = getattr(getattr(rag, "vector_db_config", None), "collection_name", "documents")
+        collection_name = request.form.get('collection_name', default_collection)
         document_title = request.form.get('document_title', file.filename)
         document_type = request.form.get('document_type', 'other')
         business_module = request.form.get('business_module', '')
@@ -318,21 +343,14 @@ def query_documents():
             }), 400
 
         query = data['query']
-        collection_name = data.get('collection_name')
-        business_module = data.get('business_module')
+        # 简化版查询：只需要query参数，其他使用默认值
+        # 默认使用当前RAG配置中的集合名称
+        default_collection = getattr(getattr(rag, "vector_db_config", None), "collection_name", None)
+        collection_name = data.get('collection_name') or default_collection
         top_k = data.get('top_k', 5)
-        filters = data.get('filters', {})
 
-        # 如果指定了业务模块，添加到过滤条件中
-        if business_module:
-            if not rag.validate_business_module(business_module):
-                available_modules = list(rag.get_business_modules().keys())
-                return jsonify({
-                    "code": 400,
-                    "message": f"无效的业务模块: {business_module}。可用的模块: {', '.join(available_modules)}",
-                    "data": None
-                }), 400
-            filters['business_module'] = business_module
+        # 移除复杂的filters参数，默认不进行过滤，让向量数据库自动匹配
+        filters = None
 
         # 执行查询
         try:
@@ -487,17 +505,122 @@ def delete_collection(collection_name):
                 "data": None
             }), 500
 
-        # 这里需要实现删除集合的方法
-        # rag.delete_collection(collection_name)
+        # 删除集合（Chroma: 物理删除集合；同时更新 collections.json 中的记录）
+        try:
+            rag.knowledge_base.delete_collection(collection_name)
+        except Exception as e:
+            current_app.logger.error(f"删除集合失败: {e}")
+            return jsonify({
+                "code": 500,
+                "message": f"删除集合失败: {str(e)}",
+                "data": {
+                    "collection_name": collection_name
+                }
+            }), 500
 
         return jsonify({
             "code": 200,
             "message": "删除成功",
-            "data": None
+            "data": {
+                "collection_name": collection_name
+            }
         }), 200
 
     except Exception as e:
         current_app.logger.error(f"删除集合异常: {e}")
+        return jsonify({
+            "code": 500,
+            "message": f"服务器内部错误: {str(e)}",
+            "data": None
+        }), 500
+
+
+@rag_document_opt.route('/collection/<collection_name>/rebuild', methods=['POST'])
+def rebuild_collection(collection_name):
+    """
+    清空并重建指定集合的索引（适用于 Chroma 调试/回归）。
+
+    请求参数 (JSON，可选):
+    {
+        "source_configs": [...],          // 可选，格式与 build_knowledge_base 一致；不传则尝试从 collections.json 读取
+        "chunking_strategy": "default",   // 可选
+        "clear_first": true               // 可选，默认 true
+    }
+    """
+    try:
+        rag = get_rag_service()
+        if not rag:
+            return jsonify({
+                "code": 500,
+                "message": "RAG服务初始化失败",
+                "data": None
+            }), 500
+
+        data = request.get_json(silent=True) or {}
+        source_configs = data.get("source_configs")
+        chunking_strategy = data.get("chunking_strategy")
+        clear_first = data.get("clear_first", True)
+
+        # 优先使用请求传入的 source_configs；否则从 KnowledgeBase 已记录的集合信息中读取
+        if not source_configs:
+            kb_collection = getattr(rag.knowledge_base, "collections", {}).get(collection_name) or {}
+            source_configs = kb_collection.get("source_configs")
+
+        if not source_configs:
+            return jsonify({
+                "code": 400,
+                "message": "缺少 source_configs，且 collections.json 中未找到该集合的历史 source_configs，无法重建",
+                "data": {
+                    "collection_name": collection_name
+                }
+            }), 400
+
+        # 先清空集合，避免脏向量影响调试
+        if clear_first:
+            try:
+                rag.knowledge_base.delete_collection(collection_name)
+            except Exception as e:
+                # 如果集合不存在，允许继续重建；其他错误返回
+                msg = str(e)
+                if "does not exist" not in msg.lower() and "not found" not in msg.lower() and "不存在" not in msg:
+                    current_app.logger.error(f"清空集合失败: {e}")
+                    return jsonify({
+                        "code": 500,
+                        "message": f"清空集合失败: {msg}",
+                        "data": {
+                            "collection_name": collection_name
+                        }
+                    }), 500
+
+        # 重建索引（复用 build_knowledge_base）
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            build_result = loop.run_until_complete(
+                rag.build_knowledge_base(
+                    source_configs=source_configs,
+                    collection_name=collection_name,
+                    chunking_strategy=chunking_strategy
+                )
+            )
+        finally:
+            loop.close()
+
+        if build_result.get("status") != "success":
+            return jsonify({
+                "code": 500,
+                "message": f"重建失败: {build_result.get('message') or build_result.get('error') or '未知错误'}",
+                "data": build_result
+            }), 500
+
+        return jsonify({
+            "code": 200,
+            "message": "重建成功",
+            "data": build_result
+        }), 200
+
+    except Exception as e:
+        current_app.logger.error(f"重建集合异常: {e}")
         return jsonify({
             "code": 500,
             "message": f"服务器内部错误: {str(e)}",

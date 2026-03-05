@@ -8,6 +8,15 @@ import numpy as np
 import json
 import os
 
+# ===== 修复 sqlite3 版本问题 =====
+try:
+    import pysqlite3
+    import sys
+    sys.modules['sqlite3'] = pysqlite3
+except ImportError:
+    pass
+# ===== 修复结束 =====
+
 from common.rag.core.models import DocumentChunk, CollectionStats
 from common.rag.core.config_manager import ConfigManager, VectorDBConfig, RAGConfig
 
@@ -33,6 +42,7 @@ class VectorIndexer:
         self.rag_config = config_manager.get_rag_config()
         self.embedding_client = embedding_client
         self.vector_store = None
+        self.config_manager = config_manager  # 保存config_manager引用
 
         # 加载embedding模型配置
         self.embedding_models_config = self._load_embedding_models_config()
@@ -44,7 +54,15 @@ class VectorIndexer:
 
     def _load_embedding_models_config(self) -> Dict[str, Any]:
         """加载embedding模型配置"""
-        config_path = os.path.join(os.path.dirname(self.config.__file__) if hasattr(self.config, '__file__') else "app/config/rag", "embedding_models.json")
+        # 优先使用config对象的__file__属性，否则基于项目根目录计算
+        if hasattr(self.config, '__file__') and self.config.__file__:
+            config_dir = os.path.join(os.path.dirname(self.config.__file__), '..', 'config', 'rag')
+        else:
+            # 基于项目根目录计算绝对路径
+            project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', '..'))
+            config_dir = os.path.join(project_root, 'app', 'config', 'rag')
+        
+        config_path = os.path.join(config_dir, "embedding_models.json")
         try:
             with open(config_path, 'r', encoding='utf-8') as f:
                 return json.load(f)
@@ -84,6 +102,9 @@ class VectorIndexer:
         """初始化向量存储"""
         db_type = self.config.db_type.lower()
 
+        # 检查是否配置了fallback_to_memory（用于ChromaDB失败时切换到内存存储）
+        self._fallback_to_memory = getattr(self.config, 'fallback_to_memory', False)
+
         try:
             if db_type == "chroma":
                 self._init_chroma()
@@ -96,24 +117,28 @@ class VectorIndexer:
 
         except ImportError as e:
             logger.error(f"导入向量数据库包失败: {e}")
-            # 尝试使用内存存储作为fallback
-            try:
-                logger.info("尝试使用内存存储作为fallback...")
-                self.config.db_type = "memory"
-                self._init_memory_store()
-            except Exception as fallback_e:
-                logger.error(f"内存存储fallback也失败: {fallback_e}")
-                raise RuntimeError("无法初始化任何向量数据库，请检查依赖安装")
+            # 检查是否启用fallback到内存存储
+            if self._fallback_to_memory:
+                try:
+                    logger.info("尝试使用内存存储作为fallback...")
+                    self.config.db_type = "memory"
+                    self._init_memory_store()
+                    return
+                except Exception as fallback_e:
+                    logger.error(f"内存存储fallback也失败: {fallback_e}")
+            raise RuntimeError("无法初始化任何向量数据库，请检查依赖安装")
         except Exception as e:
             logger.error(f"初始化向量存储失败: {e}")
-            # 尝试使用内存存储作为fallback
-            try:
-                logger.info("尝试使用内存存储作为fallback...")
-                self.config.db_type = "memory"
-                self._init_memory_store()
-            except Exception as fallback_e:
-                logger.error(f"内存存储fallback也失败: {fallback_e}")
-                raise
+            # 检查是否启用fallback到内存存储
+            if self._fallback_to_memory:
+                try:
+                    logger.info("尝试使用内存存储作为fallback...")
+                    self.config.db_type = "memory"
+                    self._init_memory_store()
+                    return
+                except Exception as fallback_e:
+                    logger.error(f"内存存储fallback也失败: {fallback_e}")
+            raise
 
     def _init_chroma(self):
         """初始化ChromaDB - 支持本地持久化和远程服务器"""
@@ -269,9 +294,9 @@ class VectorIndexer:
                 return await self._generate_huggingface_embeddings(texts, model)
 
         except Exception as e:
-            logger.error(f"生成向量时出错: {e}")
-            # 返回随机向量作为fallback
-            return self._generate_random_vectors(len(texts))
+            # 调试与线上一致性优先：embedding 失败直接抛错，避免随机向量掩盖真实问题
+            logger.error(f"生成embedding失败，将中止本次流程: {e}")
+            raise
 
     async def _generate_tongyi_embeddings(self, texts: List[str], model: str = None) -> List[List[float]]:
         """使用通义千问生成embedding"""
@@ -279,10 +304,12 @@ class VectorIndexer:
             import dashscope
             from dashscope import TextEmbedding
 
-            # 设置API密钥
+            # 设置API密钥 - 优先从环境变量读取，其次从配置读取
             api_key = os.getenv('DASHSCOPE_API_KEY')
+            if not api_key and self.config_manager:
+                api_key = self.config_manager.api_key
             if not api_key:
-                raise ValueError("未设置DASHSCOPE_API_KEY环境变量")
+                raise ValueError("未设置DASHSCOPE_API_KEY环境变量，且配置中无可用API Key")
 
             dashscope.api_key = api_key
 
@@ -429,21 +456,24 @@ class VectorIndexer:
                 ids.append(chunk_id)
 
             # 2. 生成向量（根据文档类型选择模型）
-            doc_type = chunks[0].doc_type.value if chunks[0].doc_type else None
+            # doc_type 可能是 DocumentType 枚举或字符串，需要兼容处理
+            doc_type_value = chunks[0].doc_type
+            if hasattr(doc_type_value, 'value'):
+                # 如果是枚举类型，取其 value
+                doc_type = doc_type_value.value
+            elif isinstance(doc_type_value, str):
+                # 如果是字符串，直接使用
+                doc_type = doc_type_value
+            else:
+                doc_type = None
             embedding_config = self._get_embedding_config_for_document(doc_type)
             logger.info(f"生成向量中... 文档类型: {doc_type}, 使用模型: {embedding_config['provider']}/{embedding_config['model']}")
             vectors = await self.generate_embeddings(texts, embedding_config)
 
             if len(vectors) != len(chunks):
-                logger.warning(f"向量数量不匹配: 文本数={len(chunks)}, 向量数={len(vectors)}")
-                # 调整向量数量
-                if len(vectors) < len(chunks):
-                    # 生成缺失的随机向量
-                    missing = len(chunks) - len(vectors)
-                    random_vectors = self._generate_random_vectors(missing)
-                    vectors.extend(random_vectors)
-                else:
-                    vectors = vectors[:len(chunks)]
+                raise RuntimeError(
+                    f"embedding 返回数量不匹配，拒绝写入以避免污染向量库：texts={len(chunks)} vectors={len(vectors)}"
+                )
 
             # 3. 存储到向量数据库
             logger.info("存储到向量数据库...")

@@ -26,9 +26,33 @@ try:
     from api.http_api_config import api_config_opt
     from api.http_test_execution import test_exec_opt
     from api.http_rag_document import rag_document_opt
+    from api.http_test_case_generate import test_case_gen_opt
+    from api.http_rag_document_v2 import rag_document_opt_v2
+    from api.http_rag_iteration import rag_iteration_opt
 except Exception as e:
     print('异常信息' + str(e))
     exit(0)
+
+# 读取AI配置，设置API Key环境变量
+def _load_api_keys():
+    """从配置文件加载API Keys"""
+    config_path = os.path.join(os.path.dirname(__file__), 'config', 'app', 'ai_config.json')
+    if os.path.exists(config_path):
+        try:
+            import json
+            with open(config_path, 'r', encoding='utf-8') as f:
+                config = json.load(f)
+                api_key = config.get('api_key')
+                if api_key:
+                    os.environ['DASHSCOPE_API_KEY'] = api_key
+                    print(f"[OK] Loaded Tongyi API Key")
+                base_url = config.get('base_url')
+                if base_url:
+                    os.environ['DASHSCOPE_BASE_URL'] = base_url
+        except Exception as e:
+            print(f"[WARN] Failed to load API config: {e}")
+
+_load_api_keys()
 
 # 创建Flask应用实例
 app = Flask(__name__)
@@ -235,6 +259,9 @@ app.register_blueprint(env_config_opt, url_prefix="/data_service")
 app.register_blueprint(api_config_opt, url_prefix="/data_service")
 app.register_blueprint(test_exec_opt, url_prefix="/data_service")
 app.register_blueprint(rag_document_opt, url_prefix="/rag_service")
+app.register_blueprint(test_case_gen_opt, url_prefix="/rag_service")
+app.register_blueprint(rag_document_opt_v2, url_prefix="/rag_service")
+app.register_blueprint(rag_iteration_opt, url_prefix="/rag_service")
 
 
 # 在应用创建后立即检查系统状态
@@ -243,20 +270,20 @@ def init_system_status():
     try:
         # 数据库状态检查
         db_status, db_message = check_database_connection()
-        status_icon = "✅" if db_status else "❌"
-        print(f"📊 数据库状态: {status_icon} {db_message}")
+        status_icon = "[OK]" if db_status else "[FAIL]"
+        print(f"DB Status: {status_icon} {db_message}")
 
         # RAG服务状态检查
         rag_status, rag_message = check_rag_service_status()
-        status_icon = "✅" if rag_status else "❌"
-        print(f"🤖 RAG服务状态: {status_icon} {rag_message}")
+        status_icon = "[OK]" if rag_status else "[FAIL]"
+        print(f"RAG Status: {status_icon} {rag_message}")
 
-        print("🔗 API服务就绪: /rag_service/*")
-        print(f"🌐 服务端口: {app_port}")
+        print("API Ready: /rag_service/*")
+        print(f"Port: {app_port}")
         print("-" * 50)
 
     except Exception as e:
-        print(f"⚠️  系统状态检查异常: {e}")
+        print(f"WARN - System status check exception: {e}")
 
 # 执行系统状态检查
 init_system_status()

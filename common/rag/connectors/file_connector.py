@@ -119,9 +119,14 @@ class FileConnector(BaseConnector):
             include_patterns: List[str]
     ) -> bool:
         """判断是否应该处理文件"""
-        # 检查扩展名
-        if extensions and file_path.suffix.lower() not in extensions:
-            return False
+        # 检查扩展名 - 支持带点或不带点的扩展名
+        if extensions:
+            # 标准化扩展名：确保都带点
+            normalized_ext = file_path.suffix.lower()
+            normalized_extensions = [ext.lower() if ext.startswith('.') else f'.{ext.lower()}' for ext in extensions]
+            
+            if normalized_ext not in normalized_extensions:
+                return False
 
         # 检查文件大小
         try:

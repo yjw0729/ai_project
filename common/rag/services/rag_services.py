@@ -77,6 +77,12 @@ class RAGService:
 
     def _load_business_modules_config(self, config_dir: str) -> Dict[str, Any]:
         """加载业务模块配置"""
+        # 规范化路径：去除尾部斜杠，确保路径格式一致
+        config_dir = os.path.normpath(config_dir.strip())
+
+        # 或者使用更严格的处理
+        config_dir = config_dir.rstrip('/\\')
+
         config_path = os.path.join(config_dir, "rag", "business_modules.json")
         try:
             with open(config_path, 'r', encoding='utf-8') as f:
@@ -121,18 +127,9 @@ class RAGService:
 
             dashscope.api_key = api_key
 
-            # 测试连接
-            try:
-                Generation.call(
-                    model=self.rag_config.llm_model,
-                    prompt="test",
-                    max_tokens=1
-                )
-                logger.info(f"通义千问客户端初始化成功: {self.rag_config.llm_model}")
-                return Generation
-            except Exception as e:
-                logger.warning(f"通义千问连接测试失败: {e}, 将使用模拟客户端")
-                return self._init_mock_client()
+            # 不在这里测试连接，使用时再测试
+            logger.info(f"通义千问客户端已配置: {self.rag_config.llm_model}")
+            return Generation
 
         except ImportError:
             logger.warning("未安装dashscope包，将使用模拟客户端")
@@ -153,18 +150,9 @@ class RAGService:
 
             client = OpenAI(api_key=api_key)
 
-            # 测试连接
-            try:
-                client.chat.completions.create(
-                    model=self.rag_config.llm_model,
-                    messages=[{"role": "user", "content": "test"}],
-                    max_tokens=1
-                )
-                logger.info(f"OpenAI客户端初始化成功: {self.rag_config.llm_model}")
-                return client
-            except Exception as e:
-                logger.warning(f"OpenAI连接测试失败: {e}, 将使用模拟客户端")
-                return self._init_mock_client()
+            # 不在这里测试连接，使用时再测试
+            logger.info(f"OpenAI客户端已配置: {self.rag_config.llm_model}")
+            return client
 
         except ImportError:
             logger.warning("未安装openai包，将使用模拟客户端")
@@ -242,7 +230,7 @@ class RAGService:
             temperature: float = None,
             max_tokens: int = None,
             filters: Dict[str, Any] = None,
-            use_cache: bool = True
+            use_cache: bool = False
     ) -> Dict[str, Any]:
         """
         完整的RAG查询流程

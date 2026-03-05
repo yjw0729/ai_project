@@ -58,21 +58,19 @@ class RAGMonitor:
 
         # 概览信息
         overview = stats.get('overview', {})
-        print("🏠 系统概览:"        print(f"   📚 集合数量: {overview.get('total_collections', 0)}")
+        print(f"   📚 集合数量: {overview.get('total_collections', 0)}")
         print(f"   🧩 总文本块: {overview.get('total_chunks', 0)}")
         print(f"   📏 向量维度: {overview.get('vector_dimensions', 768)}")
 
         # 向量数据库信息
         vector_db = stats.get('vector_database', {})
-        print("
-🗄️  向量数据库:"        print(f"   类型: {vector_db.get('db_type', 'unknown')}")
+        print(f"   类型: {vector_db.get('db_type', 'unknown')}")
         print(f"   集合数: {vector_db.get('collection_count', 0)}")
         print(f"   存储路径: {vector_db.get('storage_path', 'unknown')}")
 
         # 存储信息
         storage = stats.get('storage', {})
-        print("
-💾 存储空间:"        print(f"   ChromaDB数据: {self.format_size(storage.get('chroma_data_size', 0))}")
+        print(f"   ChromaDB数据: {self.format_size(storage.get('chroma_data_size', 0))}")
         print(f"   上传文件: {self.format_size(storage.get('uploads_size', 0))}")
         print(f"   缓存文件: {self.format_size(storage.get('cache_size', 0))}")
         print(f"   日志文件: {self.format_size(storage.get('logs_size', 0))}")
@@ -81,8 +79,7 @@ class RAGMonitor:
         # 系统磁盘信息
         system_disk = storage.get('system_disk', {})
         if 'total' in system_disk:
-            print("
-🖥️  系统磁盘:"            print(f"   总容量: {system_disk['total']:.1f} GB")
+            print(f" 总容量: {system_disk['total']:.1f} GB")
             print(f"   已使用: {system_disk['used']:.1f} GB ({system_disk['percent']}%)")
             print(f"   可用: {system_disk['free']:.1f} GB")
 
@@ -103,7 +100,7 @@ class RAGMonitor:
             print("📭 系统中暂无集合")
             return
 
-        print("📋 集合列表:"        print(f"{'名称':<20} {'块数量':<10} {'创建时间':<20}")
+        print(f"{'名称':<20} {'块数量':<10} {'创建时间':<20}")
         print("-" * 60)
 
         for collection in collections:
@@ -137,22 +134,19 @@ class RAGMonitor:
 
         basic_info = col_data.get('basic_info', {})
         if basic_info:
-            print("
-📊 基本信息:"            print(f"      总块数: {basic_info.get('total_chunks', 0)}")
+            print(f"      总块数: {basic_info.get('total_chunks', 0)}")
             print(f"      向量维度: {basic_info.get('vector_dim', 768)}")
             print(f"      索引类型: {basic_info.get('index_type', 'default')}")
             print(f"      创建时间: {basic_info.get('created_at', 'unknown')}")
 
         vector_stats = col_data.get('vector_stats', {})
         if vector_stats:
-            print("
-🔢 向量统计:"            print(f"      总实体数: {vector_stats.get('total_entities', 0)}")
+            print(f"      总实体数: {vector_stats.get('total_entities', 0)}")
             print(f"      相似度度量: {vector_stats.get('metric_type', 'cosine')}")
 
             chroma_info = vector_stats.get('chroma_info', {})
             if chroma_info and 'collection_name' in chroma_info:
-                print("
-🎨 ChromaDB信息:"                print(f"         集合ID: {chroma_info.get('collection_id', 'unknown')}")
+                print(f"         集合ID: {chroma_info.get('collection_id', 'unknown')}")
 
     def show_business_modules(self):
         """显示业务模块统计"""
@@ -163,7 +157,8 @@ class RAGMonitor:
         if data and data.get('code') == 200:
             modules_data = data['data']
             modules = modules_data.get('modules', [])
-            print("🏷️  配置的业务模块:"            for module in modules:
+            print("🏷️  配置的业务模块:")
+            for module in modules:
                 status = "✅" if module.get('enabled', True) else "❌"
                 print(f"   {status} {module['name']} ({module['key']})")
                 print(f"      分类: {module.get('category', 'unknown')}")
@@ -175,7 +170,7 @@ class RAGMonitor:
         if data and data.get('code') == 200:
             business_modules = data['data'].get('business_modules', [])
             if business_modules:
-                print("📈 业务模块数据统计:"                print(f"{'模块名称':<15} {'文档数':<8} {'块数':<8} {'状态':<6}")
+                print(f"{'模块名称':<15} {'文档数':<8} {'块数':<8} {'状态':<6}")
                 print("-" * 50)
 
                 for module in business_modules:

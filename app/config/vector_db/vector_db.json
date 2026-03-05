@@ -1,7 +1,7 @@
 {
   "db_type": "chroma",
   "collection_name": "test_agent_knowledge",
-  "dimension": 768,
+  "dimension": 1536,
   "metric_type": "COSINE",
   "index_type": "IVF_FLAT",
   "host": "localhost",
@@ -23,5 +23,6 @@
   "enable_compression": false,
   "enable_cache": true,
   "cache_size": 1000,
-  "enable_monitoring": false
+  "enable_monitoring": false,
+  "fallback_to_memory": true
 }
