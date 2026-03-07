@@ -11,6 +11,7 @@ from pathlib import Path
 from common.rag.core.knowledge_base import KnowledgeBase
 from common.rag.core.config_manager import ConfigManager, RAGConfig
 from common.rag.core.models import DocumentChunk
+from common.llm.prompt_manager import get_prompt_manager, get_qa_prompt
 
 logger = logging.getLogger(__name__)
 
@@ -414,7 +415,8 @@ class RAGService:
             context_text += f"内容: {chunk['content']}\n\n"
 
         # 构建prompt模板
-        prompt_template = """你是一个智能问答助手，请根据提供的参考信息来回答问题。
+        # 优先从配置获取，失败时使用代码默认值
+        default_qa_template = """你是一个智能问答助手，请根据提供的参考信息来回答问题。
 
 参考信息：
 {context}
@@ -427,6 +429,9 @@ class RAGService:
 3. 可以引用参考信息的编号来说明来源
 
 请用中文回答："""
+        
+        prompt_manager = get_prompt_manager()
+        prompt_template = prompt_manager.get_qa_prompt(default_qa_template)
 
         prompt = prompt_template.format(
             context=context_text,

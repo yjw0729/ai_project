@@ -7,9 +7,17 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
 from common.llm.llm_client import LLMClient, MockLLMClient
+from common.llm.prompt_manager import get_prompt_manager, get_api_case_prompt
 
 
 def _default_prompt_template() -> str:
+    """获取默认的prompt模板，优先从配置获取，失败时使用代码默认值"""
+    # 优先从配置获取
+    config_prompt = get_api_case_prompt()
+    if config_prompt:
+        return config_prompt
+    
+    # 回退到代码默认值
     return (
         "你是接口测试专家，基于接口信息生成测试用例JSON数组。\n"
         "输出格式：每个用例包含 id,title,priority,tags,request,expect,status_code,assertions\n"

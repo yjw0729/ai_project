@@ -21,6 +21,7 @@ try:
     from common.rag.services.rag_services import RAGService
     from common.rag.core.models import DocumentType
     from common.rag.core.word_document_processor import WordDocumentProcessor
+    from common.llm.prompt_manager import get_prompt_manager
 except ImportError as e:
     current_app.logger.error(f"RAG模块导入失败: {e}")
     RAGService = None
@@ -466,7 +467,12 @@ def generate_test_cases_v2():
             prompt_type = content_data.get('prompt_type', 'both')
         
         # 选择提示词模板
-        prompt_template = PROMPT_TEMPLATES.get(prompt_type, PROMPT_TEMPLATES["both"])
+        # 优先从配置获取，失败时使用代码默认值
+        prompt_manager = get_prompt_manager()
+        prompt_template = prompt_manager.get_document_prompt(
+            prompt_type,
+            PROMPT_TEMPLATES.get(prompt_type, PROMPT_TEMPLATES["both"])
+        )
         prompt = prompt_template.format(content=combined_content[:8000])
         
         # 调用LLM生成测试案例

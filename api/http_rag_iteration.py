@@ -19,6 +19,7 @@ from werkzeug.utils import secure_filename
 try:
     from common.rag.services.rag_services import RAGService
     from common.rag.core.word_document_processor import WordDocumentProcessor
+    from common.llm.prompt_manager import get_prompt_manager
 except ImportError as e:
     current_app.logger.error(f"RAG模块导入失败: {e}")
     RAGService = None
@@ -240,9 +241,11 @@ def generate_iteration_test_cases():
         current_app.logger.info(f"检索到 {len(context_results)} 条相关上下文")
         
         # 2. 选择提示词模板
-        prompt_template = ITERATION_PROMPT_TEMPLATES.get(
-            iteration_type, 
-            ITERATION_PROMPT_TEMPLATES["new_feature"]
+        # 优先从配置获取，失败时使用代码默认值
+        prompt_manager = get_prompt_manager()
+        prompt_template = prompt_manager.get_iteration_prompt(
+            iteration_type,
+            ITERATION_PROMPT_TEMPLATES.get(iteration_type, ITERATION_PROMPT_TEMPLATES["new_feature"])
         )
         
         # 3. 构建完整提示词
