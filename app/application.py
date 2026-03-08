@@ -298,6 +298,6 @@ init_system_status()
 
 if __name__ == '__main__':
     app.debug = True
-    host = "172.20.10.4"
+    host = "127.0.0.1"
     print(f"服务启动成功，访问地址: http://{host}:{app_port}")
     app.run(host=host, port=app_port)
