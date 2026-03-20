@@ -10,14 +10,14 @@ root_path = read_xml(get_xml_path(), 'root_path')
 
 @generate_idCardNo_opt.route('/create_idCardNo', methods = ['POST'])
 def created_idCardNo():
-    get_json = request.get_json()
-    type = get_json['type']
+    get_json = request.get_json() or {}
+    type = get_json.get('type', '0')
     id_cardNo = create_identity_card(type)
     response = {
         'code': 200,
         'message': '证件号生成完成',
         'data': {
-            'bankcard_no': id_cardNo
+            'id_card_no': id_cardNo
         }
     }
 

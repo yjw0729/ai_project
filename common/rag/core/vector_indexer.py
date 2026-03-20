@@ -158,7 +158,27 @@ class VectorIndexer:
                 )
             else:
                 # 使用本地持久化存储（新版本API）
-                persist_directory = "./chroma_data"
+                # 使用绝对路径，基于配置目录计算项目根目录
+                # config_dir 格式为 xxx/app/config，需要获取项目根目录
+                if self.config_manager and hasattr(self.config_manager, 'config_dir'):
+                    config_dir = self.config_manager.config_dir
+                    if isinstance(config_dir, str):
+                        config_dir = Path(config_dir)
+                    # 尝试多种可能的项目根目录计算方式
+                    # 方式1: config_dir 是 xxx/app/config，则项目根目录是 xxx
+                    project_root = config_dir.parent.parent
+                    # 验证项目根目录下是否有 chroma_data 或其他项目文件
+                    if not (project_root / 'chroma_data').exists() and not (project_root / 'app').exists():
+                        # 方式2: config_dir 是 xxx/app/config/rag，则项目根目录是 xxx
+                        project_root = config_dir.parent.parent.parent
+                else:
+                    # 兜底：基于文件位置计算项目根目录
+                    current_file = os.path.abspath(__file__)
+                    # vector_indexer.py 在 common/rag/core/ 下
+                    project_root = os.path.abspath(os.path.join(current_file, '..', '..', '..', '..'))
+
+                persist_directory = os.path.join(str(project_root), 'chroma_data')
+                persist_directory = os.path.normpath(persist_directory)
                 os.makedirs(persist_directory, exist_ok=True)
 
                 logger.info(f"使用本地ChromaDB存储: {persist_directory}")

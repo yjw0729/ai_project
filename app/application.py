@@ -36,6 +36,10 @@ try:
     from api.http_test_case_generate import test_case_gen_opt
     from api.http_rag_document_v2 import rag_document_opt_v2
     from api.http_rag_iteration import rag_iteration_opt
+    from api.http_document_comparison import comparison_bp
+    from api.http_page_test_case_generate import page_test_case_bp
+    from api.http_api_interface_xmind import api_interface_xmind_bp
+from api.http_api_auto_test import api_auto_test_bp
 except Exception as e:
     print('异常信息' + str(e))
     exit(0)
@@ -247,6 +251,7 @@ def log_system_status():
     app.logger.info("   🔹 数据服务: /data_service/*")
     app.logger.info("   🔹 AI服务: /ai_service/*")
     app.logger.info("   🔹 RAG服务: /rag_service/*")
+    app.logger.info("   🔹 API自动化测试: /api/auto_test/*")
 
     # 记录服务端口
     app.logger.info(f"🌐 服务端口: {app_port}")
@@ -269,6 +274,10 @@ app.register_blueprint(rag_document_opt, url_prefix="/rag_service")
 app.register_blueprint(test_case_gen_opt, url_prefix="/rag_service")
 app.register_blueprint(rag_document_opt_v2, url_prefix="/rag_service")
 app.register_blueprint(rag_iteration_opt, url_prefix="/rag_service")
+app.register_blueprint(comparison_bp, url_prefix="/comparison")
+app.register_blueprint(page_test_case_bp, url_prefix="/page_test_case")
+app.register_blueprint(api_interface_xmind_bp, url_prefix="/api_interface_xmind")
+app.register_blueprint(api_auto_test_bp, url_prefix="/api/auto_test")
 
 
 # 在应用创建后立即检查系统状态

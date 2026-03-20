@@ -4,7 +4,15 @@
     <file_name name="name">application.xml</file_name>
     <!--  配置文件目录  -->
     <config_dir name="last_dir">app</config_dir>
-    <!--  配置文件目录  -->
+    <!--  日志文件目录  -->
+    <file_path>
+        <!--  linux下的日志文件目录  -->
+        <linux_path name="linux">/home/app/opt/auantum-test/logs/</linux_path>
+        <!--  windows下的日志文件目录  -->
+        <win_path name="win">D:/pythonProject/pytest_sxp/logs/</win_path>
+        <!-- mac下日志文件目录 -->
+        <macos_path name="macos">./logs/</macos_path>
+    </file_path>
     <!--  身份证图片模板目录  -->
     <identity_card_img>
         <!--  linux下的 mock 文件模板目录  -->
@@ -26,9 +34,9 @@
     </root_path>
     <!--  项目启动端口  -->
     <app_port>
-        <linux_path name="linux">8016</linux_path>
-        <win_path name="win">8016</win_path>
-        <macos_path name="macos">8016</macos_path>
+        <linux_path name="linux">8015</linux_path>
+        <win_path name="win">8015</win_path>
+        <macos_path name="macos">8015</macos_path>
 
     </app_port>
 </app>

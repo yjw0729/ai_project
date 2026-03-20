@@ -10,10 +10,10 @@ root_path = read_xml(get_xml_path(), 'root_path')
 
 @draw_picture_opt.route("/draw_picture", methods = ['POST'])
 def create_bankcard_no():
-    get_json = request.get_json()
-    card_name = get_json['card_name']
-    card_number = get_json['card_number']
-    img_type = get_json['img_type']
+    get_json = request.get_json() or {}
+    card_name = get_json.get('card_name', '测试')
+    card_number = get_json.get('card_number', '1234567890')
+    img_type = get_json.get('img_type', 'shenfenzheng')
     picture = cv2_pil_add_text(card_name=card_name, card_number=card_number, img_type=img_type)
     response = {
         'code': 200,

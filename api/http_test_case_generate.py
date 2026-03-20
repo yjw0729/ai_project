@@ -166,7 +166,7 @@ def parse_document_structure(document_content: str) -> dict:
     DOC_STRUCTURE_PROMPT = get_doc_structure_prompt(
         default="""你是资深技术文档分析师。请仔细阅读下面的技术文档，并将其结构化地拆分为4大部分：
 
-【文档内容】
+【文档内容识别获取】
 {content}
 
 【任务】
