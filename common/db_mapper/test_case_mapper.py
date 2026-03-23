@@ -5,6 +5,15 @@ from contextlib import contextmanager
 from common.datacase_function.contect_db import db_session
 import json
 from datetime import datetime, timedelta
+from typing import Optional
+
+
+class OptimisticLockError(Exception):
+    """乐观锁冲突异常"""
+    def __init__(self, message, server_version, client_version):
+        super().__init__(message)
+        self.server_version = server_version
+        self.client_version = client_version
 
 
 class TestCaseMapper:
@@ -84,24 +93,101 @@ class TestCaseMapper:
                 self.entity_class.id == id
             ).first()
 
-            if entity:
-                # 如果更新了重要字段，增加版本号
-                important_fields = ['test_steps', 'expected_results', 'test_data']
-                if any(field in update_data for field in important_fields):
-                    update_data['version'] = entity.version + 1
+            if not entity:
+                return None
 
-                for key, value in update_data.items():
-                    if hasattr(entity, key) and key != 'id':
-                        setattr(entity, key, value)
+            # ★ 乐观锁：检查版本号是否匹配
+            expected_version = update_data.pop("version", None)
+            if expected_version is not None and entity.version != expected_version:
+                raise OptimisticLockError(
+                    message="数据已被其他人修改，请刷新后重试",
+                    server_version=entity.version,
+                    client_version=expected_version,
+                )
 
-                # 验证更新后的案例
-                errors = entity.validate_case()
-                if errors:
-                    session.rollback()
-                    raise ValueError(f"更新后案例验证失败: {', '.join(errors)}")
+            # 如果更新了重要字段，增加版本号
+            important_fields = ['test_steps', 'expected_results', 'test_data']
+            if any(field in update_data for field in important_fields):
+                update_data['version'] = entity.version + 1
 
-                return entity
-            return None
+            for key, value in update_data.items():
+                if hasattr(entity, key) and key != 'id':
+                    setattr(entity, key, value)
+
+            # 验证更新后的案例
+            errors = entity.validate_case()
+            if errors:
+                session.rollback()
+                raise ValueError(f"更新后案例验证失败: {', '.join(errors)}")
+
+            return entity
+
+    def update_with_version_check(
+        self,
+        id: int,
+        update_data: dict,
+        expected_version: Optional[int] = None,
+        updated_by: Optional[str] = None
+    ) -> Optional[TestCase]:
+        """
+        【新增】带乐观锁的更新方法。
+
+        Args:
+            id: 用例ID
+            update_data: 要更新的字段
+            expected_version: 期望的版本号（乐观锁检查）
+            updated_by: 修改人
+
+        Returns:
+            更新后的实体，或 None
+
+        Raises:
+            OptimisticLockError: 版本号不匹配时抛出
+        """
+        with self.session_scope() as session:
+            query = session.query(self.entity_class).filter(
+                self.entity_class.id == id
+            )
+
+            # ★ 乐观锁：只有版本号匹配才允许更新
+            if expected_version is not None:
+                query = query.filter(self.entity_class.version == expected_version)
+
+            entity = query.first()
+
+            if not entity:
+                if expected_version is not None:
+                    # ID存在但版本不匹配 → 并发冲突
+                    current = session.query(self.entity_class).filter(
+                        self.entity_class.id == id
+                    ).first()
+                    if current:
+                        raise OptimisticLockError(
+                            message="数据已被其他人修改，请刷新后重试",
+                            server_version=current.version,
+                            client_version=expected_version,
+                        )
+                return None
+
+            # ★ 版本号递增
+            update_data["version"] = entity.version + 1
+            if updated_by:
+                update_data["updated_by"] = updated_by
+
+            for key, value in update_data.items():
+                if hasattr(entity, key) and key not in ("id",):
+                    setattr(entity, key, value)
+
+            # 验证更新后的案例
+            errors = entity.validate_case()
+            if errors:
+                session.rollback()
+                raise ValueError(f"更新后案例验证失败: {', '.join(errors)}")
+
+            session.flush()
+            session.refresh(entity)
+            session.expunge(entity)
+            return entity
 
     def delete(self, id, soft_delete=True):
         """删除测试案例（支持软删除）"""
@@ -709,3 +795,7 @@ class TestCaseMapper:
         case.timeout = 300  # 性能测试需要更长时间
 
         return self.create(case)
+
+
+# 将异常绑定到类，使 mapper.OptimisticLockError 可访问
+TestCaseMapper.OptimisticLockError = OptimisticLockError

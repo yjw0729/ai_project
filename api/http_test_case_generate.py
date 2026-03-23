@@ -40,6 +40,81 @@ from common.db_mapper.review_record_mapper import ReviewRecordMapper
 from common.db_mapper.review_summary_mapper import ReviewSummaryMapper
 from common.config import get_sql_query, get_default_settings
 
+# ========== 健壮性基础设施导入（懒加载，优雅降级）==========
+try:
+    import redis
+    REDIS_AVAILABLE = True
+except ImportError:
+    REDIS_AVAILABLE = False
+    print("[WARN] redis 未安装，异步任务追踪功能不可用")
+
+try:
+    import pika
+    PIKA_AVAILABLE = True
+except ImportError:
+    PIKA_AVAILABLE = False
+    print("[WARN] pika 未安装，消息队列功能不可用")
+
+# MQ客户端和TaskService全局单例（延迟初始化）
+_mq_client = None
+_task_service = None
+
+
+def _get_task_service():
+    """
+    获取 TaskService 单例（延迟初始化）。
+    连接 Redis + MySQL，提供任务追踪能力。
+    初始化失败时返回 None（调用方应降级为同步模式）。
+    """
+    global _task_service
+    if _task_service is None and REDIS_AVAILABLE:
+        try:
+            redis_client = redis.Redis(
+                host="localhost",
+                port=6379,
+                password="pytest_sxp_2026",
+                decode_responses=True,
+                socket_connect_timeout=3,
+            )
+            redis_client.ping()
+
+            from common.db_mapper.task_execution_mapper import TaskExecutionMapper
+            from platform_service.service.task_service import TaskService
+
+            _task_service = TaskService(redis_client, TaskExecutionMapper())
+            logger.info("[OK] TaskService 初始化成功")
+        except Exception as e:
+            logger.warning("[WARN] TaskService 初始化失败: %s", str(e))
+            _task_service = None
+    return _task_service
+
+
+def _get_mq_client():
+    """
+    获取 MQ 客户端单例（延迟初始化）。
+    连接 RabbitMQ，提供消息发布能力。
+    初始化失败时返回 None（调用方应降级为同步模式）。
+    """
+    global _mq_client
+    if _mq_client is None and PIKA_AVAILABLE:
+        try:
+            from platform_service.service.mq_client import get_mq_client as _get
+            _mq_client = _get()
+            _mq_client.connect()
+        except Exception as e:
+            logger.warning("[WARN] MQ客户端初始化失败: %s", str(e))
+            _mq_client = None
+    return _mq_client
+
+
+def _get_user_id_from_request(req) -> str:
+    """
+    从请求中提取用户ID。
+    当前从请求头 X-User-ID 获取，默认为 'anonymous'。
+    """
+    return req.headers.get("X-User-ID", "anonymous")
+
+
 logger = logging.getLogger(__name__)
 
 # 基础目录（项目根目录）
@@ -82,6 +157,10 @@ def json_response(body, status=200):
     """返回JSON响应"""
     resp = make_response(jsonify(body), status)
     resp.headers["Content-Type"] = "application/json; charset=utf-8"
+    # 禁用缓存，确保前端总能获取最新数据
+    resp.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+    resp.headers["Pragma"] = "no-cache"
+    resp.headers["Expires"] = "0"
     return resp
 
 
@@ -3673,3 +3752,300 @@ def delete_review(doc_id: str):
             "message": f"删除失败: {str(e)}",
             "data": None
         }, 500)
+
+
+# ===== 乐观锁更新接口 =====
+from common.db_mapper.test_case_mapper import TestCaseMapper, OptimisticLockError
+
+
+@test_case_gen_opt.route("/update-with-lock", methods=["PUT"])
+def update_case_with_lock():
+    """
+    【新增】带乐观锁的用例更新接口。
+    前端在修改用例时传入当前版本号，服务端检测并发冲突。
+
+    请求体：
+    {
+        "id": 123,
+        "version": 5,
+        "data": {
+            "name": "新名称",
+            "test_steps": [...]
+        }
+    }
+
+    响应（正常）：
+    {"code": 200, "message": "success", "data": {"version": 6}}
+
+    响应（冲突）：
+    {"code": 409, "message": "数据已被其他人修改，请刷新后重试",
+     "data": {"server_version": 7, "your_version": 5}}
+    """
+    from flask import request
+
+    payload = request.get_json(silent=True) or {}
+    case_id = payload.get("id")
+    expected_version = payload.get("version")
+    update_data = payload.get("data", {})
+
+    if not case_id:
+        return json_response({"code": 400, "message": "缺少用例ID", "data": None}, 400)
+
+    if expected_version is None:
+        # 没有传版本号，降级为普通更新
+        mapper = TestCaseMapper()
+        result = mapper.update(case_id, update_data)
+        return json_response({"code": 200, "message": "success", "data": {"id": case_id}})
+
+    try:
+        mapper = TestCaseMapper()
+        result = mapper.update_with_version_check(
+            id=case_id,
+            update_data=update_data,
+            expected_version=expected_version,
+        )
+
+        if not result:
+            return json_response({"code": 404, "message": "用例不存在", "data": None}, 404)
+
+        return json_response({
+            "code": 200,
+            "message": "success",
+            "data": {
+                "id": case_id,
+                "version": result.version,
+            }
+        })
+
+    except OptimisticLockError as e:
+        return json_response({
+            "code": 409,
+            "message": "数据已被其他人修改，请刷新后重试",
+            "data": {
+                "server_version": e.server_version,
+                "your_version": e.client_version,
+            }
+        }, 409)
+    except Exception as e:
+        logger.error(f"更新用例失败: {e}", exc_info=True)
+        return json_response({"code": 500, "message": f"更新失败: {str(e)}", "data": None}, 500)
+
+
+# ========== 新增：异步用例生成接口 ==========
+
+@test_case_gen_opt.route("/generate-async", methods=["POST"])
+def generate_cases_async():
+    """
+    【新增】异步生成测试用例。
+    提交任务后立即返回 task_id，前端通过 /task/<task_id> 轮询查进度。
+
+    请求体：
+    {
+        "doc_id": "xxx",
+        "system_name": "用户中心",
+        "options": {
+            "generate_mode": "comprehensive",
+            "priority_filter": ["P0", "P1", "P2"]
+        }
+    }
+
+    响应：
+    {
+        "code": 200,
+        "message": "任务已提交",
+        "data": {
+            "task_id": "xxx",
+            "status": "queued",
+            "query_url": "/api/auto_test/task/xxx"
+        }
+    }
+    """
+    from shared.common_proto.mq_messages import build_llm_generate_message
+
+    logger.info("【API-Generate-Async】收到异步生成用例请求")
+
+    payload = request.get_json(silent=True) or {}
+    doc_id = payload.get("doc_id")
+    if not doc_id:
+        return json_response({"code": 400, "message": "缺少 doc_id", "data": None}, 400)
+
+    # 验证文档存在
+    from common.rag.processors.api_auto_test_processor import APITestDocProcessor
+    processor = APITestDocProcessor(upload_dir=UPLOAD_FOLDER)
+    parsed = processor.load_parsed_result(doc_id)
+    if not parsed:
+        return json_response({"code": 404, "message": "文档不存在或已过期", "data": None}, 404)
+
+    user_id = _get_user_id_from_request(request)
+    trace_id = request.headers.get("X-Trace-ID", "")
+    task_service = _get_task_service()
+    mq_client = _get_mq_client()
+
+    if task_service is None or mq_client is None:
+        logger.warning("健壮性基础设施不可用，降级为同步模式")
+        return _generate_cases_sync(payload, doc_id, parsed)
+
+    task_id = task_service.create_task(
+        user_id=user_id,
+        task_type="llm.generate",
+        payload={
+            "doc_id": doc_id,
+            "system_name": payload.get("system_name", ""),
+            "options": payload.get("options", {}),
+        },
+        description=f"为文档 {doc_id} 生成测试用例",
+        trace_id=trace_id,
+        max_retries=3,
+    )
+
+    message = build_llm_generate_message(
+        task_id=task_id,
+        user_id=user_id,
+        payload={
+            "doc_id": doc_id,
+            "system_name": payload.get("system_name", ""),
+            "options": payload.get("options", {}),
+        },
+        trace_id=trace_id,
+    )
+
+    publish_ok = mq_client.publish("llm.generate", message)
+
+    if not publish_ok:
+        logger.warning("消息队列发布失败，降级为同步模式", task_id=task_id)
+        return _generate_cases_sync(payload, doc_id, parsed)
+
+    return json_response({
+        "code": 200,
+        "message": "任务已提交",
+        "data": {
+            "task_id": task_id,
+            "doc_id": doc_id,
+            "status": "queued",
+            "message": "用例生成任务已加入队列",
+            "query_url": f"/api/auto_test/task/{task_id}",
+        }
+    })
+
+
+def _generate_cases_sync(payload: dict, doc_id: str, parsed: dict):
+    """
+    同步生成用例（降级模式）。
+    当 RabbitMQ 或 Redis 不可用时，回退到此方法。
+    """
+    logger.info("【API-Generate-Sync】同步生成用例（降级模式）")
+
+    options = payload.get("options", {})
+    priority_filter = options.get("priority_filter", ["P0", "P1", "P2"])
+    system_name = payload.get("system_name") or parsed.get("system_name", "")
+
+    interface_list = parsed.get("parsed_interfaces", [])
+    flow_nodes = parsed.get("flowchart_nodes", [])
+    flow_data = parsed.get("flow_data", {})
+
+    all_cases = []
+
+    if interface_list:
+        for interface in interface_list:
+            cases = _generate_cases_for_interface(interface, options)
+            all_cases.extend(cases)
+
+    if flow_nodes:
+        cases = _generate_cases_from_flowchart(flow_data, options)
+        all_cases.extend(cases)
+
+    filtered_cases = [c for c in all_cases if c.get("priority") in priority_filter]
+    inserted_cases = _insert_cases_to_database(filtered_cases, system_name, doc_id)
+    case_ids = [c["id"] for c in inserted_cases]
+
+    by_priority = {}
+    by_tag = {}
+    for c in inserted_cases:
+        p = c.get("priority", "P2")
+        by_priority[p] = by_priority.get(p, 0) + 1
+        for tag in (c.get("tags") or []):
+            by_tag[tag] = by_tag.get(tag, 0) + 1
+
+    return json_response({
+        "code": 200,
+        "message": "用例生成完成",
+        "data": {
+            "doc_id": doc_id,
+            "case_ids": case_ids,
+            "case_count": len(inserted_cases),
+            "cases": [
+                {"id": c["id"], "name": c["name"], "priority": c.get("priority", "P2"), "tags": c.get("tags", [])}
+                for c in inserted_cases[:10]
+            ],
+            "report": {
+                "total": len(inserted_cases),
+                "by_priority": by_priority,
+                "by_tag": by_tag,
+            },
+            "mode": "sync_fallback",
+        }
+    })
+
+
+def _generate_cases_for_interface(interface: dict, options: dict) -> list:
+    """为一个接口生成测试用例（内部方法）"""
+    from common.llm import generate_api_test_cases
+    try:
+        result = generate_api_test_cases(
+            doc_id=interface.get("doc_id", ""),
+            system_name=interface.get("system_name", ""),
+            options=options,
+            parsed_content=interface,
+        )
+        return result.get("cases", [])
+    except Exception as e:
+        logger.warning("接口用例生成失败: %s", str(e))
+        return []
+
+
+def _generate_cases_from_flowchart(flow_data: dict, options: dict) -> list:
+    """从流程图数据生成测试用例"""
+    cases = []
+    try:
+        from common.rag.utils.xmind_generator import parse_llm_response_to_test_cases
+        nodes = flow_data.get("nodes", [])
+        for node in nodes:
+            if node.get("type") == "process":
+                case = {
+                    "name": f"流程验证-{node.get('name', '未知节点')}",
+                    "priority": "P1",
+                    "tags": ["flow", "e2e"],
+                    "pre_condition": "",
+                    "test_steps": [{"step": 1, "action": f"执行节点: {node.get('name')}", "expected": "成功"}],
+                    "test_data": {},
+                }
+                cases.append(case)
+    except Exception as e:
+        logger.warning("流程图用例生成失败: %s", str(e))
+    return cases
+
+
+def _insert_cases_to_database(cases: list, system_name: str, doc_id: str) -> list:
+    """将用例批量插入数据库"""
+    from common.db_mapper.test_case_mapper import TestCaseMapper
+    mapper = TestCaseMapper()
+    inserted = []
+    for case in cases:
+        try:
+            case_id = mapper.insert({
+                "name": case.get("name", "未命名用例"),
+                "system_name": system_name,
+                "doc_id": doc_id,
+                "priority": case.get("priority", "P2"),
+                "tags": ",".join(case.get("tags", [])),
+                "pre_condition": case.get("pre_condition", ""),
+                "test_steps": json.dumps(case.get("test_steps", []), ensure_ascii=False),
+                "test_data": json.dumps(case.get("test_data", {}), ensure_ascii=False),
+                "expected_result": case.get("expected_result", ""),
+                "status": "active",
+                "version": 1,
+            })
+            inserted.append({"id": case_id, **case})
+        except Exception as e:
+            logger.warning("用例插入失败: %s", str(e))
+    return inserted

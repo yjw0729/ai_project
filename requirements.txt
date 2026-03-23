@@ -39,6 +39,10 @@ sentence-transformers>=2.2.0
 aiohttp>=3.9.0
 asyncio>=3.4.3
 
+# 健壮性基础设施
+pika>=1.3.0
+structlog>=23.0.0
+
 # 工具
 APScheduler>=3.10.0
 redis>=5.0.0

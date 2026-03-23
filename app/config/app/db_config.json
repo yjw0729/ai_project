@@ -1,5 +1,5 @@
 {
-  "localhost": {
+  "default": {
     "type": "mysql+pymysql",
     "host": "localhost",
     "port": 3308,
@@ -17,7 +17,7 @@
     "password": "opts_test"
   },
 
-    "default": {
+    "default1": {
     "type": "mysql+pymysql",
     "host": "22.50.6.73",
     "port": 3306,

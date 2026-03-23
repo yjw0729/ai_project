@@ -7,7 +7,7 @@
 
 import os
 import logging
-from flask import Blueprint, request, jsonify, send_file
+from flask import Blueprint, request, jsonify, send_file, make_response
 from werkzeug.utils import secure_filename
 
 from common.rag.utils.api_doc_parser import (
@@ -19,7 +19,6 @@ logger = logging.getLogger(__name__)
 
 api_interface_xmind_bp = Blueprint("api_interface_xmind", __name__)
 
-# 输出目录：与页面测试用例共用 outputs 下的子目录
 OUTPUT_DIR = os.path.join(
     os.path.dirname(os.path.abspath(__file__)), "..", "outputs", "api_interface_xmind"
 )
@@ -28,16 +27,34 @@ os.makedirs(OUTPUT_DIR, exist_ok=True)
 ALLOWED_EXTENSIONS = {"docx", "doc"}
 
 
+def json_response(body, status=200):
+    """返回JSON响应"""
+    resp = make_response(jsonify(body), status)
+    resp.headers["Content-Type"] = "application/json; charset=utf-8"
+    # 禁用缓存，确保前端总能获取最新数据
+    resp.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+    resp.headers["Pragma"] = "no-cache"
+    resp.headers["Expires"] = "0"
+    return resp
+
+
 def allowed_file(filename: str) -> bool:
     return "." in filename and filename.rsplit(".", 1)[1].lower() in ALLOWED_EXTENSIONS
 
 
 def json_response(data, status=200):
-    return jsonify({
+    """返回JSON响应"""
+    resp = make_response(jsonify({
         "code": status if status < 400 else 500,
         "message": "success" if status < 400 else "error",
         "data": data,
-    }), status
+    }), status)
+    resp.headers["Content-Type"] = "application/json; charset=utf-8"
+    # 禁用缓存，确保前端总能获取最新数据
+    resp.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+    resp.headers["Pragma"] = "no-cache"
+    resp.headers["Expires"] = "0"
+    return resp
 
 
 @api_interface_xmind_bp.route("/generate", methods=["POST"])

@@ -39,7 +39,7 @@ try:
     from api.http_document_comparison import comparison_bp
     from api.http_page_test_case_generate import page_test_case_bp
     from api.http_api_interface_xmind import api_interface_xmind_bp
-from api.http_api_auto_test import api_auto_test_bp
+    from api.http_api_auto_test import api_auto_test_bp
 except Exception as e:
     print('异常信息' + str(e))
     exit(0)

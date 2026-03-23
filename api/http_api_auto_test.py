@@ -3,7 +3,8 @@
 import json
 import logging
 import os
-import uuid
+import traceback
+import uuid as uuid_module
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 from flask import Blueprint, request, jsonify, make_response
@@ -13,6 +14,26 @@ from common.rag.processors.api_auto_test_processor import APITestDocProcessor
 from common.test_executor import APITestRunner, ReportGenerator
 from common.llm.api_test_prompts import TEST_CASE_GENERATION_PROMPT
 from common.llm.llm_client import LLMClient
+from platform_service.service import rate_limit
+
+# ========== 健壮性基础设施导入（懒加载，优雅降级）==========
+try:
+    import redis
+    REDIS_AVAILABLE = True
+except ImportError:
+    REDIS_AVAILABLE = False
+    print("[WARN] redis 未安装，异步任务追踪功能不可用")
+
+try:
+    import pika
+    PIKA_AVAILABLE = True
+except ImportError:
+    PIKA_AVAILABLE = False
+    print("[WARN] pika 未安装，消息队列功能不可用")
+
+# MQ客户端和TaskService全局单例（延迟初始化）
+_mq_client = None
+_task_service = None
 
 logger = logging.getLogger(__name__)
 
@@ -47,9 +68,504 @@ ALLOWED_EXTENSIONS = CONFIG.get("upload", {}).get("allowed_extensions", {
 })
 
 
+# ==================== 健壮性基础设施：懒加载初始化 ====================
+
+def _get_task_service():
+    """
+    获取 TaskService 单例（延迟初始化）。
+    连接 Redis + MySQL，提供任务追踪能力。
+    初始化失败时返回 None（调用方应降级为同步模式）。
+    """
+    global _task_service
+    if _task_service is None and REDIS_AVAILABLE:
+        try:
+            redis_client = redis.Redis(
+                host="localhost",
+                port=6379,
+                password="pytest_sxp_2026",
+                decode_responses=True,
+                socket_connect_timeout=3,
+            )
+            redis_client.ping()
+
+            from common.db_mapper.task_execution_mapper import TaskExecutionMapper
+            from platform_service.service.task_service import TaskService
+
+            _task_service = TaskService(redis_client, TaskExecutionMapper())
+            logger.info("[OK] TaskService 初始化成功")
+        except Exception as e:
+            logger.warning("[WARN] TaskService 初始化失败: %s", str(e))
+            _task_service = None
+    return _task_service
+
+
+def _get_mq_client():
+    """
+    获取 MQ 客户端单例（延迟初始化）。
+    连接 RabbitMQ，提供消息发布能力。
+    初始化失败时返回 None（调用方应降级为同步模式）。
+    """
+    global _mq_client
+    if _mq_client is None and PIKA_AVAILABLE:
+        try:
+            from platform_service.service.mq_client import get_mq_client as _get
+            _mq_client = _get()
+            _mq_client.connect()
+        except Exception as e:
+            logger.warning("[WARN] MQ客户端初始化失败: %s", str(e))
+            _mq_client = None
+    return _mq_client
+
+
+# ==================== 辅助函数（异步支持） ====================
+
+def _get_user_id_from_request(req) -> str:
+    """
+    从请求中提取用户ID。
+    TODO: 接入真实会话管理后从此获取 user_id。
+    当前从请求头 X-User-ID 获取，默认为 'anonymous'。
+    """
+    return req.headers.get("X-User-ID", "anonymous")
+
+
+def _execute_tests_sync(
+    payload: dict,
+    test_cases: list,
+    execution_id: str,
+):
+    """
+    同步执行测试（降级模式）。
+    当 RabbitMQ 或 Redis 不可用时，回退到此方法。
+    逻辑与原有 /execute 端点完全一致。
+    """
+    logger.info("【API-Sync】同步执行测试用例（降级模式）", case_count=len(test_cases))
+
+    env_config = _load_env_config(payload.get("env_id"))
+    exec_config = CONFIG.get("test_execution", {})
+
+    runner = APITestRunner(
+        env_config=env_config,
+        concurrency=min(payload.get("concurrency", 5), exec_config.get("max_concurrency", 20)),
+        default_timeout=exec_config.get("default_timeout", 30),
+        max_retry=exec_config.get("retry_times", 2),
+    )
+
+    results = runner.execute_batch(test_cases, mode=payload.get("mode", "parallel"))
+    summary = runner.get_summary()
+
+    report_gen = ReportGenerator(output_dir=REPORT_DIR)
+    report_path = report_gen.generate_html_report(results, summary, execution_id)
+    json_report_path = report_gen.generate_json_report(results, summary, execution_id)
+
+    _save_execution_record(execution_id, [tc["id"] for tc in test_cases], summary, report_path, json_report_path)
+
+    return _json_response({
+        "code": 200,
+        "message": "success",
+        "data": {
+            "execution_id": execution_id,
+            "status": "completed",
+            "summary": summary,
+            "report_url": f"/api/auto_test/report/{execution_id}",
+            "results_preview": [_result_preview(r) for r in results[:5]],
+        }
+    })
+
+
+def _generate_cases_sync(
+    payload: dict,
+    doc_id: str,
+    parsed: dict,
+    processor: Any,
+):
+    """
+    同步生成测试用例（降级模式）。
+    当 RabbitMQ 或 Redis 不可用时，回退到此方法。
+    复用原有 generate_test_cases 的核心逻辑。
+    """
+    logger.info("【API-Generate-Sync】同步生成用例（降级模式）")
+
+    options = payload.get("options", {})
+    priority_filter = options.get("priority_filter", ["P0", "P1", "P2"])
+    system_name = payload.get("system_name") or parsed.get("system_name", "")
+
+    interface_list = parsed.get("parsed_interfaces", [])
+    flow_nodes = parsed.get("flowchart_nodes", [])
+    flow_data = parsed.get("flow_data", {})
+
+    all_cases = []
+
+    if interface_list:
+        for interface in interface_list:
+            cases = _generate_cases_for_interface(interface, options)
+            all_cases.extend(cases)
+
+    if flow_nodes:
+        cases = _generate_cases_from_flowchart(flow_data, options)
+        all_cases.extend(cases)
+
+    filtered_cases = [c for c in all_cases if c.get("priority") in priority_filter]
+    inserted_cases = _insert_cases_to_database(filtered_cases, system_name, doc_id)
+    case_ids = [c["id"] for c in inserted_cases]
+
+    by_priority = {}
+    by_tag = {}
+    for c in inserted_cases:
+        p = c.get("priority", "P2")
+        by_priority[p] = by_priority.get(p, 0) + 1
+        for tag in (c.get("tags") or []):
+            by_tag[tag] = by_tag.get(tag, 0) + 1
+
+    return _json_response({
+        "code": 200,
+        "message": "用例生成完成",
+        "data": {
+            "doc_id": doc_id,
+            "case_ids": case_ids,
+            "case_count": len(inserted_cases),
+            "cases": [
+                {"id": c["id"], "name": c["name"], "priority": c.get("priority", "P2"), "tags": c.get("tags", [])}
+                for c in inserted_cases[:10]
+            ],
+            "report": {
+                "total": len(inserted_cases),
+                "by_priority": by_priority,
+                "by_tag": by_tag,
+            }
+        }
+    })
+
+
+# ==================== API: 异步任务 - 测试执行 ====================
+
+@api_auto_test_bp.route("/execute-async", methods=["POST"])
+@rate_limit("execute_async")
+def execute_tests_async():
+    """
+    【新增】异步执行测试用例。
+    提交任务后立即返回 task_id，前端通过 /task/{task_id} 轮询查进度。
+
+    请求体：
+    {
+        "case_ids": [1, 2, 3],
+        "env_id": 1,
+        "concurrency": 5,
+        "mode": "parallel"
+    }
+
+    响应：
+    {
+        "code": 200,
+        "message": "任务已提交",
+        "data": {
+            "task_id": "xxx-xxx",
+            "execution_id": "exec-xxx",
+            "status": "queued",
+            "message": "任务已加入执行队列"
+        }
+    }
+    """
+    logger.info("【API-Async】收到异步执行测试请求")
+
+    payload = request.get_json(silent=True) or {}
+    case_ids = payload.get("case_ids", [])
+    env_id = payload.get("env_id")
+    concurrency = payload.get("concurrency", 5)
+    mode = payload.get("mode", "parallel")
+
+    if not case_ids:
+        return _json_response({"code": 400, "message": "缺少 case_ids", "data": None}, 400)
+
+    test_cases = _load_test_cases_from_db(case_ids)
+    if not test_cases:
+        return _json_response({"code": 404, "message": "未找到测试用例", "data": None}, 404)
+
+    user_id = _get_user_id_from_request(request)
+    execution_id = f"exec-{uuid_module.uuid4().hex[:12]}"
+    trace_id = request.headers.get("X-Trace-ID", "")
+
+    task_service = _get_task_service()
+    mq_client = _get_mq_client()
+
+    if task_service is None or mq_client is None:
+        logger.warning("健壮性基础设施不可用，降级为同步模式")
+        return _execute_tests_sync(payload, test_cases, execution_id)
+
+    task_id = task_service.create_task(
+        user_id=user_id,
+        task_type="test.execute",
+        payload={
+            "execution_id": execution_id,
+            "case_ids": case_ids,
+            "env_id": env_id,
+            "concurrency": min(concurrency, 20),
+            "mode": mode,
+        },
+        description=f"执行 {len(case_ids)} 个测试用例",
+        trace_id=trace_id,
+        max_retries=0,
+    )
+
+    from shared.common_proto.mq_messages import build_test_execute_message
+    message = build_test_execute_message(
+        task_id=task_id,
+        user_id=user_id,
+        payload={
+            "execution_id": execution_id,
+            "case_ids": case_ids,
+            "env_id": env_id,
+            "concurrency": min(concurrency, 20),
+            "mode": mode,
+        },
+        trace_id=trace_id,
+    )
+
+    publish_ok = mq_client.publish("test.execute", message)
+
+    if not publish_ok:
+        logger.warning("消息队列发布失败，降级为同步模式", task_id=task_id)
+        return _execute_tests_sync(payload, test_cases, execution_id)
+
+    logger.info("【API-Async】任务已提交",
+        task_id=task_id,
+        execution_id=execution_id,
+        case_count=len(case_ids)
+    )
+
+    return _json_response({
+        "code": 200,
+        "message": "任务已提交",
+        "data": {
+            "task_id": task_id,
+            "execution_id": execution_id,
+            "status": "queued",
+            "case_count": len(case_ids),
+            "message": f"任务已加入执行队列，共 {len(case_ids)} 个用例",
+            "query_url": f"/api/auto_test/task/{task_id}",
+        }
+    })
+
+
+@api_auto_test_bp.route("/task/<task_id>", methods=["GET"])
+def get_task_status(task_id: str):
+    """
+    【新增】查询任务状态。
+    用于前端轮询查询异步任务进度。
+
+    响应：
+    {
+        "code": 200,
+        "data": {
+            "task_id": "xxx",
+            "status": "running",
+            "progress": "45",
+            "result_summary": {...},
+            "error": null
+        }
+    }
+    """
+    user_id = _get_user_id_from_request(request)
+    task_service = _get_task_service()
+
+    if task_service is None:
+        return _json_response({
+            "code": 503,
+            "message": "任务追踪服务不可用（Redis未连接）",
+            "data": None
+        }, 503)
+
+    task = task_service.get_status(task_id, user_id)
+    if not task:
+        return _json_response({
+            "code": 404,
+            "message": "任务不存在或无权访问",
+            "data": None
+        }, 404)
+
+    return _json_response({
+        "code": 200,
+        "message": "success",
+        "data": {
+            "task_id": task["task_id"],
+            "status": task["status"],
+            "task_type": task.get("task_type"),
+            "progress": task.get("progress", "0"),
+            "result_summary": task.get("result_summary"),
+            "error": task.get("error"),
+            "created_time": task.get("created_time"),
+            "updated_time": task.get("updated_time"),
+        }
+    })
+
+
+@api_auto_test_bp.route("/task/<task_id>/cancel", methods=["POST"])
+def cancel_task(task_id: str):
+    """
+    【新增】取消任务。
+    只能取消 pending / queued / retrying 状态的任务。
+    """
+    user_id = _get_user_id_from_request(request)
+    task_service = _get_task_service()
+
+    if task_service is None:
+        return _json_response({"code": 503, "message": "任务追踪服务不可用（Redis未连接）", "data": None}, 503)
+
+    ok = task_service.cancel_task(task_id, user_id)
+    if not ok:
+        return _json_response({
+            "code": 400,
+            "message": "任务无法取消（可能已运行完成、正在运行或不存在）",
+            "data": None
+        }, 400)
+
+    return _json_response({
+        "code": 200,
+        "message": "任务已取消",
+        "data": {"task_id": task_id}
+    })
+
+
+@api_auto_test_bp.route("/task/list", methods=["GET"])
+def list_user_tasks():
+    """
+    【新增】获取当前用户的所有任务列表。
+    支持按状态过滤：?status=pending&status=running&status=completed
+
+    响应：
+    {
+        "code": 200,
+        "data": {
+            "tasks": [...],
+            "count": 5
+        }
+    }
+    """
+    user_id = _get_user_id_from_request(request)
+    status_filter = request.args.getlist("status")
+    try:
+        limit = int(request.args.get("limit", 50))
+    except ValueError:
+        limit = 50
+
+    task_service = _get_task_service()
+    if task_service is None:
+        return _json_response({"code": 503, "message": "任务追踪服务不可用（Redis未连接）", "data": None}, 503)
+
+    tasks = task_service.get_user_tasks(user_id, status_filter or None, min(limit, 200))
+    return _json_response({
+        "code": 200,
+        "message": "success",
+        "data": {
+            "tasks": tasks,
+            "count": len(tasks)
+        }
+    })
+
+
+# ==================== API: 异步任务 - 用例生成 ====================
+
+@api_auto_test_bp.route("/generate-async", methods=["POST"])
+@rate_limit("generate_async")
+def generate_cases_async():
+    """
+    【新增】异步生成测试用例。
+    提交任务后立即返回 task_id，前端轮询查进度。
+
+    请求体：
+    {
+        "doc_id": "xxx",
+        "system_name": "用户中心",
+        "options": {
+            "generate_mode": "comprehensive",
+            "priority_filter": ["P0", "P1", "P2"]
+        }
+    }
+
+    响应：
+    {
+        "code": 200,
+        "message": "任务已提交",
+        "data": {
+            "task_id": "xxx",
+            "status": "queued",
+            "query_url": "/api/auto_test/task/xxx"
+        }
+    }
+    """
+    logger.info("【API-Generate-Async】收到异步生成用例请求")
+
+    payload = request.get_json(silent=True) or {}
+    doc_id = payload.get("doc_id")
+    if not doc_id:
+        return _json_response({"code": 400, "message": "缺少 doc_id", "data": None}, 400)
+
+    processor = APITestDocProcessor(upload_dir=UPLOAD_DIR)
+    parsed = processor.load_parsed_result(doc_id)
+    if not parsed:
+        return _json_response({"code": 404, "message": "文档不存在或已过期", "data": None}, 404)
+
+    user_id = _get_user_id_from_request(request)
+    trace_id = request.headers.get("X-Trace-ID", "")
+    task_service = _get_task_service()
+    mq_client = _get_mq_client()
+
+    if task_service is None or mq_client is None:
+        logger.warning("健壮性基础设施不可用，降级为同步模式")
+        return _generate_cases_sync(payload, doc_id, parsed, processor)
+
+    task_id = task_service.create_task(
+        user_id=user_id,
+        task_type="llm.generate",
+        payload={
+            "doc_id": doc_id,
+            "system_name": payload.get("system_name", ""),
+            "options": payload.get("options", {}),
+        },
+        description=f"为文档 {doc_id} 生成测试用例",
+        trace_id=trace_id,
+        max_retries=3,
+    )
+
+    from shared.common_proto.mq_messages import build_llm_generate_message
+    message = build_llm_generate_message(
+        task_id=task_id,
+        user_id=user_id,
+        payload={
+            "doc_id": doc_id,
+            "system_name": payload.get("system_name", ""),
+            "options": payload.get("options", {}),
+        },
+        trace_id=trace_id,
+    )
+
+    publish_ok = mq_client.publish("llm.generate", message)
+
+    if not publish_ok:
+        logger.warning("消息队列发布失败，降级为同步模式", task_id=task_id)
+        return _generate_cases_sync(payload, doc_id, parsed, processor)
+
+    return _json_response({
+        "code": 200,
+        "message": "任务已提交",
+        "data": {
+            "task_id": task_id,
+            "doc_id": doc_id,
+            "status": "queued",
+            "message": "用例生成任务已加入队列",
+            "query_url": f"/api/auto_test/task/{task_id}",
+        }
+    })
+
+
+# ==================== API: 上传文档 ====================
+
 def _json_response(body: Dict[str, Any], status: int = 200):
     resp = make_response(jsonify(body), status)
     resp.headers["Content-Type"] = "application/json; charset=utf-8"
+    # 禁用缓存，确保前端总能获取最新数据
+    resp.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+    resp.headers["Pragma"] = "no-cache"
+    resp.headers["Expires"] = "0"
     return resp
 
 
@@ -92,7 +608,7 @@ def upload_api_docs():
         }, 400)
 
     filename = secure_filename(file.filename)
-    unique_filename = f"{uuid.uuid4().hex}_{filename}"
+    unique_filename = f"{uuid_module.uuid4().hex}_{filename}"
     file_path = os.path.join(UPLOAD_DIR, unique_filename)
     file.save(file_path)
 
@@ -345,7 +861,7 @@ def execute_tests():
         max_retry=exec_config.get("retry_times", 2),
     )
 
-    execution_id = f"exec-{uuid.uuid4().hex[:12]}"
+    execution_id = f"exec-{uuid_module.uuid4().hex[:12]}"
     results = runner.execute_batch(test_cases, mode=mode)
     summary = runner.get_summary()
 

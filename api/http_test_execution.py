@@ -22,6 +22,10 @@ test_exec_opt = Blueprint("test_exec_opt", __name__)
 def json_response(body, status=200):
     resp = make_response(jsonify(body), status)
     resp.headers["Content-Type"] = "application/json; charset=utf-8"
+    # 禁用缓存，确保前端总能获取最新数据
+    resp.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+    resp.headers["Pragma"] = "no-cache"
+    resp.headers["Expires"] = "0"
     return resp
 
 

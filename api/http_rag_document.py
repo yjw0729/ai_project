@@ -433,6 +433,120 @@ def list_collections():
             "data": None
         }), 500
 
+
+@rag_document_opt.route('/documents', methods=['GET'])
+def list_documents():
+    """
+    获取所有文档列表（/collections 的别名接口）
+    """
+    try:
+        rag = get_rag_service()
+        if not rag:
+            return jsonify({
+                "code": 500,
+                "message": "RAG服务初始化失败",
+                "data": None
+            }), 500
+
+        collections = rag.list_collections()
+
+        return jsonify({
+            "code": 200,
+            "message": "success",
+            "data": {
+                "list": collections
+            }
+        }), 200
+
+    except Exception as e:
+        current_app.logger.error(f"获取文档列表异常: {e}")
+        return jsonify({
+            "code": 500,
+            "message": f"服务器内部错误: {str(e)}",
+            "data": None
+        }), 500
+
+
+@rag_document_opt.route('/collections/<collection_name>/documents', methods=['GET'])
+def get_collection_documents(collection_name):
+    """
+    获取指定集合的文档列表
+
+    查询参数:
+    - limit: 返回数量，默认100
+    - offset: 偏移量，默认0
+
+    返回：
+    {
+        "code": 200,
+        "message": "success",
+        "data": {
+            "list": [
+                {
+                    "id": "doc-xxx",
+                    "name": "文档名称",
+                    "created_at": "2024-01-01 10:00:00"
+                }
+            ]
+        }
+    }
+    """
+    try:
+        limit = int(request.args.get('limit', 100))
+        offset = int(request.args.get('offset', 0))
+    except ValueError:
+        limit, offset = 100, 0
+
+    try:
+        rag = get_rag_service()
+        if not rag:
+            return jsonify({
+                "code": 500,
+                "message": "RAG服务初始化失败",
+                "data": None
+            }), 500
+
+        # 从向量数据库获取文档列表
+        documents = []
+
+        # 如果是ChromaDB，从集合中获取文档
+        if rag.vector_db_config.db_type == "chroma":
+            try:
+                chroma_collection = rag.knowledge_base.vector_indexer.collection
+                if chroma_collection.name == collection_name:
+                    # 获取所有文档ID和元数据
+                    results = chroma_collection.get(include=['metadatas'])
+                    if results and results.get('metadatas'):
+                        for i, metadata in enumerate(results['metadatas']):
+                            if metadata:
+                                doc_info = {
+                                    "id": results.get('ids', [''])[i] if results.get('ids') else f"doc-{i}",
+                                    "name": metadata.get('document_name', metadata.get('source', f"文档{i+1}")),
+                                    "created_at": metadata.get('created_at', datetime.now().isoformat())
+                                }
+                                documents.append(doc_info)
+            except Exception as e:
+                current_app.logger.warning(f"查询ChromaDB文档失败: {e}")
+
+        # 分页
+        paginated_docs = documents[offset:offset + limit]
+
+        return jsonify({
+            "code": 200,
+            "message": "success",
+            "data": {
+                "list": paginated_docs
+            }
+        }), 200
+
+    except Exception as e:
+        current_app.logger.error(f"获取集合文档列表异常: {e}")
+        return jsonify({
+            "code": 500,
+            "message": f"服务器内部错误: {str(e)}",
+            "data": None
+        }), 500
+
 @rag_document_opt.route('/collection/<collection_name>', methods=['GET'])
 def get_collection_info(collection_name):
     """
@@ -682,41 +796,22 @@ def get_system_stats():
                 "data": None
             }), 500
 
-        # 获取集合列表和统计信息
+        # 获取集合列表
         collections = rag.list_collections()
 
-        # 计算总体统计
-        total_collections = len(collections)
-        total_chunks = sum(col.get('total_chunks', 0) for col in collections)
+        # 提取集合名称列表
+        collection_names = [{"name": col.get('name', '')} for col in collections]
 
-        # 按业务模块统计
-        module_stats = {}
-        for collection in collections:
-            # 这里需要从实际存储的数据中统计，暂时用模拟数据
-            # 实际实现需要查询向量数据库中的元数据
-            pass
-
-        # 获取向量数据库统计
-        vector_db_stats = get_vector_db_stats(rag)
-
-        # 获取存储空间信息
-        storage_stats = get_storage_stats()
+        # 获取业务模块列表
+        modules_config = rag.business_modules_config.get("modules", {})
+        business_modules = list(modules_config.keys())
 
         return jsonify({
             "code": 200,
-            "message": "获取成功",
+            "message": "success",
             "data": {
-                "overview": {
-                    "total_collections": total_collections,
-                    "total_chunks": total_chunks,
-                    "total_documents": sum(len(rag.list_collections()) for _ in collections),  # 近似值
-                    "vector_dimensions": vector_db_stats.get("dimensions", 768)
-                },
-                "collections": collections,
-                "business_modules": get_business_module_stats(rag),
-                "vector_database": vector_db_stats,
-                "storage": storage_stats,
-                "last_updated": datetime.now().isoformat()
+                "collections": collection_names,
+                "business_modules": business_modules
             }
         }), 200
 
@@ -1125,6 +1220,57 @@ def get_visualization_job_status(job_id):
         "message": "异步可视化任务暂未实现",
         "data": None
     }), 501
+
+
+@rag_document_opt.route('/visualize/jobs/history', methods=['GET'])
+def list_visualization_history():
+    """
+    获取可视化任务历史记录
+
+    查询参数:
+    - limit: 返回数量，默认20
+    - offset: 偏移量，默认0
+
+    返回：
+    {
+        "code": 200,
+        "message": "获取成功",
+        "data": {
+            "total": 10,
+            "history": [
+                {
+                    "job_id": "viz-xxx",
+                    "collection_name": "user_center",
+                    "algorithm": "tsne",
+                    "status": "completed",
+                    "created_at": "2026-03-15 10:00:00"
+                }
+            ]
+        }
+    }
+    """
+    try:
+        limit = int(request.args.get('limit', 20))
+        offset = int(request.args.get('offset', 0))
+
+        # 从向量库获取历史记录
+        # 这里先返回空列表，后续可扩展存储历史记录
+        return jsonify({
+            "code": 200,
+            "message": "获取成功",
+            "data": {
+                "total": 0,
+                "history": []
+            }
+        }), 200
+
+    except Exception as e:
+        current_app.logger.error(f"获取可视化历史异常: {e}")
+        return jsonify({
+            "code": 500,
+            "message": f"服务器内部错误: {str(e)}",
+            "data": None
+        }), 500
 
 
 @rag_document_opt.route('/collections/<collection_name>/vectors', methods=['GET'])
