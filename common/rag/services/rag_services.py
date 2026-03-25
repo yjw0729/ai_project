@@ -26,34 +26,47 @@ class RAGService:
         Args:
             config_dir: 配置文件目录
         """
-        # 加载配置
-        self.config_manager = ConfigManager(config_dir).load_configs()
-        self.rag_config = self.config_manager.get_rag_config()
-        self.vector_db_config = self.config_manager.get_vector_db_config()
+        try:
+            # 加载配置
+            self.config_manager = ConfigManager(config_dir).load_configs()
+            self.rag_config = self.config_manager.get_rag_config()
+            self.vector_db_config = self.config_manager.get_vector_db_config()
 
-        # 加载业务模块配置
-        self.business_modules_config = self._load_business_modules_config(config_dir)
+            # 加载业务模块配置
+            self.business_modules_config = self._load_business_modules_config(config_dir)
 
-        # 初始化知识库
-        self.knowledge_base = KnowledgeBase(config_dir)
+            # 初始化知识库（含向量存储，可能在内存模式失败时抛出）
+            self.knowledge_base = KnowledgeBase(config_dir)
 
-        # 初始化LLM客户端
-        self.llm_client = self._init_llm_client()
+            # 初始化LLM客户端
+            self.llm_client = self._init_llm_client()
+
+        except Exception as init_err:
+            logger.warning(f"RAGService 初始化异常，已降级为最小可用状态: {init_err}")
+            # 允许后续代码继续运行；_generate_answer 已有空值保护
+            self.config_manager = None
+            self.rag_config = None
+            self.vector_db_config = None
+            self.business_modules_config = {"modules": {}}
+            self.knowledge_base = None
+            self.llm_client = None
 
         # 缓存目录
         self.cache_dir = Path("./cache")
         self.cache_dir.mkdir(exist_ok=True)
 
-        # 记录详细的初始化信息
-        logger.info("="*50)
-        logger.info("🤖 RAG服务初始化详情:")
-        logger.info(f"   📊 向量数据库: {self.vector_db_config.db_type}")
-        logger.info(f"   🧠 Embedding模型: {self.rag_config.embedding_provider}/{self.rag_config.embedding_model}")
-        logger.info(f"   💬 LLM模型: {self.rag_config.llm_provider}/{self.rag_config.llm_model}")
-        logger.info(f"   📁 缓存目录: {self.cache_dir.absolute()}")
-        logger.info(f"   🏢 业务模块: {len(self.business_modules_config.get('modules', {}))} 个已配置")
-        logger.info("="*50)
-        logger.info("✅ RAG服务初始化完成")
+        if self.config_manager is not None:
+            logger.info("=" * 50)
+            logger.info("🤖 RAG服务初始化详情:")
+            logger.info(f"   📊 向量数据库: {self.vector_db_config.db_type}")
+            logger.info(f"   🧠 Embedding模型: {self.rag_config.embedding_provider}/{self.rag_config.embedding_model}")
+            logger.info(f"   💬 LLM模型: {self.rag_config.llm_provider}/{self.rag_config.llm_model}")
+            logger.info(f"   📁 缓存目录: {self.cache_dir.absolute()}")
+            logger.info(f"   🏢 业务模块: {len(self.business_modules_config.get('modules', {}))} 个已配置")
+            logger.info("=" * 50)
+            logger.info("✅ RAG服务初始化完成")
+        else:
+            logger.warning("RAG服务处于降级模式，部分功能可能不可用")
 
     def _init_llm_client(self):
         """初始化LLM客户端"""

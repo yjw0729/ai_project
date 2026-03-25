@@ -1,4 +1,9 @@
 """
+[DEPRECATED] 请使用 assertion/validators.py 的 AssertionExecutor
+此模块将在未来版本中移除
+"""
+
+"""
 API自动化测试 - 断言引擎
 支持多种断言类型：状态码、响应字段、正则、时间等
 """

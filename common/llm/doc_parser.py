@@ -140,48 +140,229 @@ def parse_doc_file(file_path: str, location_hint: str = "body") -> Dict[str, Any
 
     # 尝试从文档文本中提取JSON示例（查找"入参示例"、"请求示例"等关键词后的JSON）
     if full_text:
-        # 方法1: 查找"1.1.3入参示例"和"1.1.4出参"之间的内容
-        section_pattern = r'(?:1\.\d+\.\d+.*?入参示例|入参示例|请求示例|请求体示例|参数示例)[：:]\s*\n?([\s\S]*?)(?=1\.\d+\.\d+.*?出参|出参示例|响应示例|$)'
+        # 方法1: 查找"请求示例"后跟 API 格式（POST/GET + URL + Content-Type + JSON）
+        section_pattern = r'(?:请求示例|入参示例)[：:\s]*\n*([\s\S]*?)(?=1\.\d+.*?出参|出参示例|响应示例|$)'
         section_match = re.search(section_pattern, full_text, re.IGNORECASE | re.MULTILINE)
         if section_match:
             section_text = section_match.group(1).strip()
-            # 从这段文本中提取JSON
-            json_in_section = re.search(r'(\{[\s\S]*?\})', section_text)
-            if json_in_section:
-                json_str = json_in_section.group(1).strip()
+            # 在这段文本中查找 API 格式的 JSON
+            api_json_match = re.search(
+                r'(?:POST|GET|PUT|DELETE|PATCH)\s+[^\n]+\nContent-Type:\s*application/json\s*\n+(\{[\s\S]*?\})',
+                section_text,
+                re.IGNORECASE | re.MULTILINE
+            )
+            if api_json_match:
+                json_str = api_json_match.group(1).strip()
                 try:
                     params_example = json.loads(json_str)
+                    print(f"[DEBUG] 从API格式匹配到JSON: {json_str[:200]}...")
                 except json.JSONDecodeError:
-                    # 尝试清理可能的格式问题
+                    # JSON 格式不规范时，保存原始文本供后续处理
+                    json_str = re.sub(r'[\x00-\x1f\x7f-\x9f]', '', json_str)
+                    try:
+                        params_example = json.loads(json_str)
+                        print(f"[DEBUG] 清理后匹配到JSON: {json_str[:200]}...")
+                    except:
+                        # 保存原始文本，标记为待处理
+                        params_example = {"_raw_json_text": json_str}
+                        print(f"[DEBUG] JSON格式不规范，保存原始文本: {json_str[:200]}...")
+
+        # 方法2: 直接从 full_text 中查找 API 格式的 JSON
+        if not params_example:
+            api_json_pattern = r'(?:POST|GET|PUT|DELETE|PATCH)\s+[^\n]+\nContent-Type:\s*application/json\s*\n+(\{[\s\S]*?\})'
+            api_match = re.search(api_json_pattern, full_text, re.IGNORECASE | re.MULTILINE)
+            if api_match:
+                json_str = api_match.group(1).strip()
+                try:
+                    params_example = json.loads(json_str)
+                    print(f"[DEBUG] 从API格式匹配到JSON(方法2): {json_str[:200]}...")
+                except json.JSONDecodeError:
                     json_str = re.sub(r'[\x00-\x1f\x7f-\x9f]', '', json_str)
                     try:
                         params_example = json.loads(json_str)
                     except:
-                        pass
+                        # 保存原始文本，标记为待处理
+                        params_example = {"_raw_json_text": json_str}
+                        print(f"[DEBUG] JSON格式不规范，保存原始文本(方法2): {json_str[:200]}...")
 
-        # 方法2: 如果方法1没找到，尝试直接匹配JSON块
+        # 方法3: 如果还没找到，尝试通用的 JSON 匹配模式
         if not params_example:
             json_patterns = [
-                r'(?:入参示例|请求示例|请求体示例|参数示例)[：:]\s*\n?(\{[\s\S]*?\})',
-                r'(?:入参示例|请求示例|请求体示例|参数示例)[：:]\s*\n?```(?:json)?\s*(\{[\s\S]*?\})\s*```',
+                r'\{[\s\S]{50,3000}\}(?=\s*\n\s*(?:1\.\d|出参|响应|$))',
             ]
             for pattern in json_patterns:
                 match = re.search(pattern, full_text, re.IGNORECASE | re.MULTILINE)
                 if match:
-                    json_str = match.group(1).strip()
+                    json_str = match.group(0).strip()
                     try:
                         params_example = json.loads(json_str)
+                        print(f"[DEBUG] 从通用模式匹配到JSON: {json_str[:200]}...")
                         break
                     except json.JSONDecodeError:
-                        # 尝试清理可能的格式问题
-                        json_str = re.sub(r'[\x00-\x1f\x7f-\x9f]', '', json_str)  # 移除控制字符
+                        # 可能是嵌套JSON字符串格式，尝试修复
                         try:
-                            params_example = json.loads(json_str)
-                            break
-                        except:
+                            # 处理 action_context 等字段包含嵌套JSON字符串的情况
+                            # 将 "action_context": "{ ... }" 转换为 "action_context": { ... }
+                            fixed = _fix_nested_json(json_str)
+                            if fixed:
+                                params_example = json.loads(fixed)
+                                print(f"[DEBUG] 修复嵌套JSON后成功: {fixed[:200]}...")
+                                break
+                        except Exception as e:
+                            print(f"[DEBUG] 修复嵌套JSON失败: {e}")
                             continue
 
-    return {"fields": fields, "tables": tables, "params_example": params_example}
+    return {"fields": fields, "tables": tables, "params_example": params_example, "text": full_text}
+
+
+def _fix_nested_json(json_str: str) -> str:
+    """
+    修复嵌套JSON字符串格式的问题。
+
+    文档中可能有这种格式：
+    "action_context": "{
+        "amount": 50000,
+        "currency": "CNY"
+    }"
+
+    需要转换为有效的JSON：
+    "action_context": {
+        "amount": 50000,
+        "currency": "CNY"
+    }
+    """
+    import re
+
+    result = json_str
+
+    # 找到所有嵌套 JSON 字符串的模式
+    # 例如: "action_context": "{
+    #     nested content
+    #   }",
+    # 这种格式的问题在于，内部的 JSON 对象被当作字符串值处理了
+
+    # 方法1：找到 "field_name": "{ 开头，到 }", 结尾
+    # 使用正则匹配多行
+    nested_pattern = r'"([^"]+)":\s*"(\{[\s\S]*?\})"(?=\s*[,}\]])'
+
+    def fix_single_nested(match):
+        field_name = match.group(1)
+        nested_content = match.group(2)
+
+        # 尝试解析内部内容
+        inner = nested_content.strip()
+        if inner.startswith('{') and inner.endswith('}'):
+            # 检查内部是否有未转义的双引号
+            try:
+                # 首先尝试直接解析
+                json.loads(inner)
+                return match.group(0)  # 已经是有效的 JSON
+            except json.JSONDecodeError:
+                pass
+
+            # 尝试转义内部的双引号
+            # 找到字段名和值，替换未转义的双引号
+            # 这是一个简化处理，假设内部是标准的 JSON 格式
+
+            # 使用字符级处理
+            fixed_inner = _escape_json_string(inner)
+            try:
+                json.loads(fixed_inner)
+                return f'"{field_name}": {fixed_inner}'
+            except:
+                pass
+
+        return match.group(0)
+
+    result = re.sub(nested_pattern, fix_single_nested, result)
+
+    return result
+
+
+def _escape_json_string(s: str) -> str:
+    """
+    将 JSON 字符串中的未转义字符转义。
+
+    这个函数处理文档中格式不规范的嵌套 JSON。
+    """
+    import re
+
+    # 原始字符串可能包含：
+    # "field": "{
+    #     "nested_field": "value"
+    # }"
+
+    # 我们需要：
+    # 1. 找到嵌套 JSON 的开始（以 { 开头）
+    # 2. 找到嵌套 JSON 的结束（找到对应的最后一个 }）
+    # 3. 将内部的未转义双引号转义
+
+    # 简化处理：找到 "field": "{ 模式，提取到下一个 ", 模式
+    lines = s.split('\n')
+    result_lines = []
+    i = 0
+
+    while i < len(lines):
+        line = lines[i]
+
+        # 检查是否是嵌套 JSON 字段的开始
+        # 例如: "action_context": "{
+        if re.match(r'^\s*"[^"]+":\s*"\{', line):
+            # 收集多行直到找到结束
+            nested_lines = [line]
+            i += 1
+
+            # 找到结束行（以 }", 或 }" 结尾）
+            while i < len(lines):
+                next_line = lines[i]
+                nested_lines.append(next_line)
+
+                # 检查是否是结束行
+                if re.search(r'^\s*\}",?\s*$', next_line) or re.search(r'\}"\s*,\s*$', next_line):
+                    break
+                i += 1
+
+            # 合并嵌套行
+            nested_str = '\n'.join(nested_lines)
+
+            # 去掉首尾引号并转义
+            # 模式: "field": "{
+            #        content
+            #     }",
+
+            # 找到第一个 ": " 后的 { 和 最后的 }",
+            # 中间的内容需要重新构建为有效的 JSON
+
+            # 简单方法：提取 { 到 } 的内容，然后重新构建
+            match = re.search(r'"\s*(\{[\s\S]*\})\s*"', nested_str)
+            if match:
+                inner = match.group(1)
+                # 去掉首尾的 { 和 }
+                if inner.startswith('{'):
+                    inner = inner[1:]
+                if inner.endswith('}'):
+                    inner = inner[:-1]
+                inner = inner.strip()
+
+                # 内部的内容应该已经是有效的 JSON 格式
+                # 重新构建
+                field_match = re.match(r'^"([^"]+)":\s*', nested_str)
+                if field_match:
+                    field_name = field_match.group(1)
+                    # 假设 inner 是有效的 JSON 对象
+                    result_lines.append(f'"{field_name}": {{')
+                    result_lines.append(inner.strip(','))
+                    result_lines.append('}')
+                    i += 1
+                    continue
+
+            result_lines.append(line)
+        else:
+            result_lines.append(line)
+
+        i += 1
+
+    return '\n'.join(result_lines)
 
 
 def constraints_from_fields(fields: List[Dict[str, Any]]) -> str:

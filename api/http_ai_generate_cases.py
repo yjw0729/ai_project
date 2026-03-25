@@ -27,7 +27,7 @@ def json_response(body, status=200):
 
 def _load_stub_cases():
     """挡板：当 use_llm=false 时返回预置用例及原始信息。"""
-    logger = current_app.logger or logging.getLogger(__name__)
+    logger = logging.getLogger(__name__)
     try:
         project_root = os.path.dirname(os.path.dirname(__file__))
         # 使用最新指定的挡板文件
@@ -228,8 +228,7 @@ def generate_testcases():
         payload = request.get_json(force=True, silent=False) or {}
         persist = payload.get("persist", False)
         ai_conf = load_ai_config()
-        # 挡板生效：强制不调用大模型
-        use_llm = False
+        use_llm = ai_conf.get("use_llm", True)
         logger.info("【接口调用开始】/ai/generate_testcases 入参=%s, 是否调用大模型=%s", payload, use_llm)
 
         required_fields = ["api_name", "http_method", "path", "params_example"]
@@ -249,9 +248,9 @@ def generate_testcases():
                     status=500,
                 )
             base_url = (ai_conf.get("base_url") or "https://dashscope.aliyuncs.com/compatible-mode/v1").rstrip("/")
-            model = ai_conf.get("model") or "qwen-turbo"
+            model = ai_conf.get("model") or "qwen-plus"
             temperature = ai_conf.get("temperature", 0.2)
-            max_tokens = ai_conf.get("max_tokens", 1024)
+            max_tokens = ai_conf.get("max_tokens", 16000)
             timeout = ai_conf.get("timeout", 600)
             llm_client = OpenAILLMClient(
                 api_key=api_key,

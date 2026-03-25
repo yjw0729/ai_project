@@ -74,7 +74,7 @@ class ReviewSummaryMapper:
             logger.info(f"[ReviewSummaryMapper] 新建汇总记录成功，id={entity.id}")
             return entity.id
 
-    def upsert(self, doc_id: str, document_title: str, business_module: str = None,
+    def upsert(self, doc_id: str, document_title: str = None, business_module: str = None,
                document_type: str = None, interface_count: int = 0, image_count: int = 0,
                general_image_count: int = 0, test_case_count: int = 0,
                status: str = 'pending', xmind_file_path: str = None,
@@ -111,26 +111,37 @@ class ReviewSummaryMapper:
                 session.add(entity)
                 logger.info(f"[ReviewSummaryMapper] 新建汇总记录 doc_id={doc_id}")
             else:
-                entity.document_title = document_title
-                entity.business_module = business_module
-                entity.document_type = document_type
-                entity.interface_count = interface_count
-                entity.image_count = image_count
-                entity.general_image_count = general_image_count
-                entity.test_case_count = test_case_count
-                entity.status = status
+                # 只更新明确传入的字段，避免把已存在字段覆盖为 None
+                update_vals = {"updated_time": datetime.now()}
+                if document_title is not None:
+                    update_vals["document_title"] = document_title
+                if business_module is not None:
+                    update_vals["business_module"] = business_module
+                if document_type is not None:
+                    update_vals["document_type"] = document_type
+                update_vals["interface_count"] = interface_count
+                update_vals["image_count"] = image_count
+                update_vals["general_image_count"] = general_image_count
+                update_vals["test_case_count"] = test_case_count
+                update_vals["status"] = status
                 if xmind_file_path is not None:
-                    entity.xmind_file_path = xmind_file_path
+                    update_vals["xmind_file_path"] = xmind_file_path
                 if reviewer is not None:
-                    entity.reviewer = reviewer
+                    update_vals["reviewer"] = reviewer
                 if review_comment is not None:
-                    entity.review_comment = review_comment
-                entity.updated_time = datetime.now()
+                    update_vals["review_comment"] = review_comment
+                session.execute(
+                    self.entity_class.__table__.update()
+                    .where(self.entity_class.doc_id == doc_id)
+                    .values(**update_vals)
+                )
                 logger.info(f"[ReviewSummaryMapper] 更新汇总记录 doc_id={doc_id}")
 
             session.flush()
-            session.refresh(entity)
-            return self._to_dict(entity)
+            entity = session.query(self.entity_class).filter(
+                self.entity_class.doc_id == doc_id
+            ).first()
+            return self._to_dict(entity) if entity else None
 
     def update_status(self, doc_id: str, status: str,
                       reviewer: str = None, review_comment: str = None) -> dict:
@@ -143,15 +154,21 @@ class ReviewSummaryMapper:
             if entity is None:
                 logger.warning(f"[ReviewSummaryMapper] 汇总记录不存在 doc_id={doc_id}")
                 return None
-            entity.status = status
-            if reviewer is not None:
-                entity.reviewer = reviewer
-            if review_comment is not None:
-                entity.review_comment = review_comment
-            entity.updated_time = datetime.now()
+            session.execute(
+                self.entity_class.__table__.update()
+                .where(self.entity_class.doc_id == doc_id)
+                .values(
+                    status=status,
+                    reviewer=reviewer,
+                    review_comment=review_comment,
+                    updated_time=datetime.now(),
+                )
+            )
             session.flush()
-            session.refresh(entity)
-            return self._to_dict(entity)
+            entity = session.query(self.entity_class).filter(
+                self.entity_class.doc_id == doc_id
+            ).first()
+            return self._to_dict(entity) if entity else None
 
     def update_generation_result(self, doc_id: str, xmind_file_path: str,
                                   test_case_count: int) -> dict:

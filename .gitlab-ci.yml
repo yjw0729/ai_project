@@ -1,0 +1,253 @@
+# GitLab CI/CD Configuration for API Tests
+# https://docs.gitlab.com/ee/ci/yaml/
+
+variables:
+  PYTHON_VERSION: "3.12"
+  PIP_CACHE_DIR: "$CI_PROJECT_DIR/.cache/pip"
+  ALLURE_RESULTS: "allure-results"
+  ALLURE_REPORT: "allure-report"
+
+stages:
+  - lint
+  - test
+  - report
+  - notify
+
+# Cache pip dependencies between jobs
+cache:
+  key: ${CI_COMMIT_REF_SLUG}
+  paths:
+    - .cache/pip
+    - .venv/
+
+#-----------------------------------------------------------
+# Stage: Lint
+#-----------------------------------------------------------
+lint:
+  stage: lint
+  image: python:${PYTHON_VERSION}-slim
+  before_script:
+    - pip install --upgrade pip
+    - pip install flake8 black isort
+  script:
+    - |
+      echo "Running code quality checks..."
+      flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics || true
+      black --check . || true
+      isort --check-only --diff . || true
+  allow_failure: true
+  artifacts:
+    paths:
+      - flake8-report.txt
+    expire_in: 1 day
+
+#-----------------------------------------------------------
+# Stage: Test - Smoke Tests
+#-----------------------------------------------------------
+test_smoke:
+  stage: test
+  image: python:${PYTHON_VERSION}-slim
+  before_script:
+    - pip install --upgrade pip
+    - pip install -r requirements.txt || pip install -r test_requirements.txt 2>/dev/null || true
+    - pip install pytest pytest-xdist pytest-allure allure-python-py2
+    - npm install -g allure-commandline || true
+  script:
+    - |
+      echo "Running Smoke Tests..."
+      pytest tests/ -m "smoke" -v --tb=short --alluredir=${ALLURE_RESULTS} -n auto
+  artifacts:
+    paths:
+      - ${ALLURE_RESULTS}/
+    expire_in: 7 days
+    when: always
+  coverage: '/TOTAL.*\s+(\d+%)$/'
+  tags:
+    - docker
+
+#-----------------------------------------------------------
+# Stage: Test - Regression Tests
+#-----------------------------------------------------------
+test_regression:
+  stage: test
+  image: python:${PYTHON_VERSION}-slim
+  before_script:
+    - pip install --upgrade pip
+    - pip install -r requirements.txt || pip install -r test_requirements.txt 2>/dev/null || true
+    - pip install pytest pytest-xdist pytest-allure allure-python-py2
+    - npm install -g allure-commandline || true
+  script:
+    - |
+      echo "Running Regression Tests..."
+      pytest tests/ -m "regression" -v --tb=short --alluredir=${ALLURE_RESULTS} -n auto
+  artifacts:
+    paths:
+      - ${ALLURE_RESULTS}/
+    expire_in: 7 days
+    when: always
+  tags:
+    - docker
+
+#-----------------------------------------------------------
+# Stage: Test - CI/CD Integration Tests
+#-----------------------------------------------------------
+test_cicd:
+  stage: test
+  image: python:${PYTHON_VERSION}-slim
+  before_script:
+    - pip install --upgrade pip
+    - pip install -r requirements.txt || pip install -r test_requirements.txt 2>/dev/null || true
+    - pip install pytest pytest-xdist pytest-allure allure-python-py2
+    - npm install -g allure-commandline || true
+  script:
+    - |
+      echo "Running CI/CD Integration Tests..."
+      pytest tests/ -m "ci_cd" -v --tb=short --alluredir=${ALLURE_RESULTS} -n auto
+  artifacts:
+    paths:
+      - ${ALLURE_RESULTS}/
+    expire_in: 7 days
+    when: always
+  tags:
+    - docker
+
+#-----------------------------------------------------------
+# Stage: Test - P0 Priority Tests
+#-----------------------------------------------------------
+test_p0:
+  stage: test
+  image: python:${PYTHON_VERSION}-slim
+  before_script:
+    - pip install --upgrade pip
+    - pip install -r requirements.txt || pip install -r test_requirements.txt 2>/dev/null || true
+    - pip install pytest pytest-xdist pytest-allure allure-python-py2
+    - npm install -g allure-commandline || true
+  script:
+    - |
+      echo "Running P0 Priority Tests..."
+      pytest tests/ -m "P0" -v --tb=short --alluredir=${ALLURE_RESULTS} -n auto
+  artifacts:
+    paths:
+      - ${ALLURE_RESULTS}/
+    expire_in: 7 days
+    when: always
+  tags:
+    - docker
+
+#-----------------------------------------------------------
+# Stage: Test - P1 Priority Tests
+#-----------------------------------------------------------
+test_p1:
+  stage: test
+  image: python:${PYTHON_VERSION}-slim
+  before_script:
+    - pip install --upgrade pip
+    - pip install -r requirements.txt || pip install -r test_requirements.txt 2>/dev/null || true
+    - pip install pytest pytest-xdist pytest-allure allure-python-py2
+    - npm install -g allure-commandline || true
+  script:
+    - |
+      echo "Running P1 Priority Tests..."
+      pytest tests/ -m "P1" -v --tb=short --alluredir=${ALLURE_RESULTS} -n auto
+  artifacts:
+    paths:
+      - ${ALLURE_RESULTS}/
+    expire_in: 7 days
+    when: always
+  allow_failure: true
+  tags:
+    - docker
+
+#-----------------------------------------------------------
+# Stage: Report - Generate Allure Report
+#-----------------------------------------------------------
+generate_report:
+  stage: report
+  image: python:${PYTHON_VERSION}-slim
+  before_script:
+    - pip install --upgrade pip
+    - pip install allure-python-py2
+  script:
+    - |
+      echo "Generating Allure Report..."
+      if [ -d "${ALLURE_RESULTS}" ] && [ "$(ls -A ${ALLURE_RESULTS})" ]; then
+        allure generate ${ALLURE_RESULTS} -o ${ALLURE_REPORT} --clean
+      else
+        echo "No test results found, skipping report generation"
+        exit 0
+      fi
+  artifacts:
+    paths:
+      - ${ALLURE_REPORT}/
+    expire_in: 30 days
+    when: always
+  needs:
+    - job: test_smoke
+      optional: true
+    - job: test_regression
+      optional: true
+    - job: test_cicd
+      optional: true
+    - job: test_p0
+      optional: true
+
+#-----------------------------------------------------------
+# Stage: Notify - Send Notifications
+#-----------------------------------------------------------
+notify_failure:
+  stage: notify
+  image: python:${PYTHON_VERSION}-slim
+  script:
+    - |
+      echo "Sending failure notification..."
+      # Add your notification logic here (Slack, Email, DingTalk, etc.)
+      echo "Test pipeline failed! Check the results at: ${CI_PIPELINE_URL}"
+  only:
+    - main
+    - develop
+    - schedules
+  when: on_failure
+  tags:
+    - docker
+
+notify_success:
+  stage: notify
+  image: python:${PYTHON_VERSION}-slim
+  script:
+    - |
+      echo "Sending success notification..."
+      # Add your notification logic here (Slack, Email, DingTalk, etc.)
+      echo "All tests passed! Pipeline completed successfully."
+  only:
+    - main
+    - develop
+    - schedules
+  when: on_success
+  tags:
+    - docker
+
+#-----------------------------------------------------------
+# Full Test Suite (Scheduled Pipeline Only)
+#-----------------------------------------------------------
+test_full_suite:
+  stage: test
+  image: python:${PYTHON_VERSION}-slim
+  before_script:
+    - pip install --upgrade pip
+    - pip install -r requirements.txt || pip install -r test_requirements.txt 2>/dev/null || true
+    - pip install pytest pytest-xdist pytest-allure allure-python-py2
+    - npm install -g allure-commandline || true
+  script:
+    - |
+      echo "Running Full Test Suite..."
+      pytest tests/ -v --tb=short --alluredir=${ALLURE_RESULTS} -n auto
+  artifacts:
+    paths:
+      - ${ALLURE_RESULTS}/
+    expire_in: 14 days
+    when: always
+  only:
+    - schedules
+  allow_failure: true
+  tags:
+    - docker

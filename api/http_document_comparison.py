@@ -152,7 +152,7 @@ def analyze_with_llm(content: str, prompt_type: str = "structure") -> dict:
             prompt = f"""你是资深技术文档分析师。请仔细阅读下面的技术文档，并将其结构化地拆分为4大部分：
 
 【文档内容】
-{content[:60000]}
+{content[:120000]}
 
 【任务】
 请将文档拆分并返回如下 JSON 结构（严格JSON，不要有其他内容）：
@@ -164,12 +164,12 @@ def analyze_with_llm(content: str, prompt_type: str = "structure") -> dict:
 }}
 
 注意：每一部分的content必须是原始文档中对应内容的完整提取或精简概括。"""
-            
+
             result = loop.run_until_complete(
                 rag._generate_answer(
                     prompt=prompt,
                     temperature=0.2,
-                    max_tokens=8000
+                    max_tokens=16000
                 )
             )
             
@@ -184,20 +184,29 @@ def analyze_with_llm(content: str, prompt_type: str = "structure") -> dict:
             return {"raw_result": result}
         
         elif prompt_type == "image_ocr":
-            # 图片OCR识别
-            prompt = f"""请仔细识别这张图片中的文字内容，并返回识别出的文本。"""
-            
-            # 这里假设content是base64编码的图片
-            # 实际使用时需要调整
-            result = loop.run_until_complete(
-                rag._generate_answer(
-                    prompt=prompt,
-                    temperature=0.1,
-                    max_tokens=4000
-                )
-            )
-            
-            return {"ocr_result": result}
+            # 图片OCR识别 - 使用公共图片分析模块
+            from common.image_analysis.image_analyzer import analyze_image
+            import base64
+
+            # content 可能是 base64 编码的图片数据
+            if isinstance(content, str) and len(content) > 1000:
+                # 可能是 base64 编码
+                try:
+                    image_data = base64.b64decode(content)
+                    result = analyze_image(image_bytes=image_data, mode="flowchart")
+                except Exception:
+                    # 尝试作为文件路径
+                    result = analyze_image(image_path=content, mode="flowchart")
+            elif isinstance(content, str):
+                # 作为文件路径处理
+                result = analyze_image(image_path=content, mode="flowchart")
+            else:
+                result = {"success": False, "analysis": "", "error": "无效的图片数据"}
+
+            if result.get("success"):
+                return {"ocr_result": result.get("analysis", "")}
+            else:
+                return {"error": result.get("error", "图片识别失败"), "ocr_result": ""}
     
     except Exception as e:
         logger.exception("LLM分析失败")

@@ -341,7 +341,7 @@ class APIDocAnalyzer:
         logger.info("【APIDocAnalyzer】使用LLM增强解析")
 
         try:
-            prompt = OPENAPI_ENHANCE_PROMPT.format(openapi_content=raw_content[:8000])
+            prompt = OPENAPI_ENHANCE_PROMPT.format(openapi_content=raw_content[:80000])
             response, _ = self.llm.chat_with_prompt(prompt)
 
             # 提取JSON
@@ -388,6 +388,119 @@ class FlowchartAnalyzer:
     def __init__(self, llm_client: Optional[LLMClient] = None):
         self.llm = llm_client or MockLLMClient()
 
+    @staticmethod
+    def _parse_json_robust(text: str) -> Optional[Dict[str, Any]]:
+        """
+        健壮的 JSON 解析，尝试多种修复策略。
+        1. 直接解析
+        2. 智能提取 JSON 块 + 逐行修复
+        3. 正则回退 + 逐行修复
+        """
+        import re
+
+        def _try_parse(s: str) -> tuple:
+            try:
+                return json.loads(s), "直接解析"
+            except json.JSONDecodeError:
+                pass
+            return None, ""
+
+        def _smart_fix_json(s: str) -> str:
+            """智能修复常见 JSON 格式问题"""
+            lines = s.split('\n')
+            fixed_lines = []
+            i = 0
+            while i < len(lines):
+                line = lines[i]
+                stripped = line.rstrip()
+
+                # 跳过空行和注释行
+                if not stripped or stripped.startswith('//') or stripped.startswith('#'):
+                    i += 1
+                    continue
+
+                # 检查是否需要修复：行的末尾可能是未闭合的字符串
+                # 例如: "content": "这是一个很长的
+                #        内容跨越多行"
+                # 通过引号计数判断
+                in_string = False
+                escape_next = False
+                quote_count = 0
+                for ch in stripped:
+                    if escape_next:
+                        escape_next = False
+                        continue
+                    if ch == '\\':
+                        escape_next = True
+                        continue
+                    if ch == '"':
+                        in_string = not in_string
+                        quote_count += 1
+
+                # 如果引号数量是奇数，说明字符串未闭合
+                # 尝试从后续行找闭合引号
+                if quote_count % 2 == 1:
+                    merged_lines = [stripped]
+                    j = i + 1
+                    while j < len(lines):
+                        next_line = lines[j].strip()
+                        if not next_line or next_line.startswith('//') or next_line.startswith('#'):
+                            j += 1
+                            continue
+                        merged_lines.append(next_line)
+                        # 检查合并后引号是否平衡
+                        merged = '\n'.join(merged_lines)
+                        temp_quote = 0
+                        temp_escape = False
+                        for ch in merged:
+                            if temp_escape:
+                                temp_escape = False
+                                continue
+                            if ch == '\\':
+                                temp_escape = True
+                                continue
+                            if ch == '"':
+                                temp_quote += 1
+                        if temp_quote % 2 == 0:
+                            # 引号平衡了，修复成功
+                            stripped = merged
+                            i = j
+                            break
+                        j += 1
+                    else:
+                        # 找不到闭合，引号数奇数，强制闭合
+                        stripped += '"'
+
+                fixed_lines.append(stripped)
+                i += 1
+
+            return '\n'.join(fixed_lines)
+
+        # 1. 直接解析
+        data, method = _try_parse(text)
+        if data is not None:
+            return data
+
+        # 2. 尝试正则提取第一个 JSON 对象 + 智能修复
+        try:
+            match = re.search(r'\{[\s\S]*\}', text)
+            if match:
+                json_str = match.group()
+                fixed = _smart_fix_json(json_str)
+                data, _ = _try_parse(fixed)
+                if data is not None:
+                    return data
+        except Exception:
+            pass
+
+        # 3. 修复后再次尝试原始文本
+        fixed = _smart_fix_json(text)
+        data, _ = _try_parse(fixed)
+        if data is not None:
+            return data
+
+        return None
+
     def analyze_text_description(self, description: str) -> Dict[str, Any]:
         """
         从文本描述中分析流程。
@@ -399,10 +512,8 @@ class FlowchartAnalyzer:
             prompt = FLOWCHART_ANALYSIS_PROMPT.format(flowchart_description=description)
             response, _ = self.llm.chat_with_prompt(prompt)
 
-            # 提取JSON
-            json_match = re.search(r'\{[\s\S]*\}', response)
-            if json_match:
-                data = json.loads(json_match.group())
+            data = self._parse_json_robust(response)
+            if data is not None:
                 logger.info("【FlowchartAnalyzer】流程分析完成，节点数=%d",
                             len(data.get("nodes", [])))
                 return data
@@ -418,6 +529,21 @@ class FlowchartAnalyzer:
         """
         logger.info("【FlowchartAnalyzer】开始分析流程图图片")
 
+        # 统一处理：无论传入的是纯 base64 还是有 data-URI 前缀，
+        # 都只取 base64 主体部分，然后自行拼接正确的 data-URI 前缀。
+        b64_body = image_base64
+        if image_base64.startswith("data:"):
+            # 提取 ;base64, 之后的部分
+            sep = ";base64,"
+            idx = image_base64.find(sep)
+            if idx != -1:
+                b64_body = image_base64[idx + len(sep):]
+            else:
+                # 有 data: 但格式不对，直接取 : 之后的内容
+                b64_body = image_base64.split(":", 1)[1]
+                if "," in b64_body:
+                    b64_body = b64_body.split(",", 1)[1]
+
         messages = [
             {
                 "role": "user",
@@ -428,7 +554,7 @@ class FlowchartAnalyzer:
                     },
                     {
                         "type": "image_url",
-                        "image_url": {"url": f"data:image/png;base64,{image_base64}"}
+                        "image_url": {"url": f"data:image/png;base64,{b64_body}"}
                     }
                 ]
             }
@@ -437,10 +563,8 @@ class FlowchartAnalyzer:
         try:
             response, _ = self.llm.chat(messages)
 
-            # 尝试解析JSON
-            json_match = re.search(r'\{[\s\S]*\}', response)
-            if json_match:
-                data = json.loads(json_match.group())
+            data = self._parse_json_robust(response)
+            if data is not None:
                 return data
         except Exception as e:
             logger.error("【FlowchartAnalyzer】图片分析失败: %s", str(e))

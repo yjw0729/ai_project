@@ -14,6 +14,7 @@ from common.rag.processors.api_auto_test_processor import APITestDocProcessor
 from common.test_executor import APITestRunner, ReportGenerator
 from common.llm.api_test_prompts import TEST_CASE_GENERATION_PROMPT
 from common.llm.llm_client import LLMClient
+from common.config_loader import get_config
 from platform_service.service import rate_limit
 
 # ========== 健壮性基础设施导入（懒加载，优雅降级）==========
@@ -44,14 +45,8 @@ api_auto_test_bp = Blueprint("api_auto_test", __name__, url_prefix="/api/auto_te
 # ==================== 加载配置 ====================
 
 def _load_config() -> Dict[str, Any]:
-    config_path = os.path.join(os.path.dirname(__file__), "..", "config", "api_auto_test_config.json")
-    if os.path.exists(config_path):
-        try:
-            with open(config_path, 'r', encoding='utf-8') as f:
-                return json.load(f)
-        except Exception as e:
-            logger.warning("加载API自动化测试配置失败: %s", str(e))
-    return {}
+    """从 ConfigLoader 加载配置"""
+    return get_config()._config.get("api_auto_test", {})
 
 
 CONFIG = _load_config()
@@ -66,6 +61,12 @@ ALLOWED_EXTENSIONS = CONFIG.get("upload", {}).get("allowed_extensions", {
     "api_doc": [".docx", ".pdf"],
     "flowchart": [".png", ".jpg", ".jpeg"],
 })
+
+
+def _load_retry_times() -> int:
+    """从配置文件读取失败重试次数"""
+    from common.config_loader import get_config
+    return get_config().retry_times
 
 
 # ==================== 健壮性基础设施：懒加载初始化 ====================
@@ -136,7 +137,10 @@ def _execute_tests_sync(
     """
     同步执行测试（降级模式）。
     当 RabbitMQ 或 Redis 不可用时，回退到此方法。
-    逻辑与原有 /execute 端点完全一致。
+
+    注意：此降级方法仍复用原有 ThreadPoolExecutor 方式，
+    因为 TestCaseExecutor 需要数据库完整连接。
+    完整 pytest 迁移由 /execute 端点提供。
     """
     logger.info("【API-Sync】同步执行测试用例（降级模式）", case_count=len(test_cases))
 
@@ -832,54 +836,169 @@ def _insert_cases_to_database(cases: List[Dict[str, Any]], system_name: str, doc
 # ==================== API: 执行测试 ====================
 
 @api_auto_test_bp.route("/execute", methods=["POST"])
+@rate_limit("execute")
 def execute_tests():
     """
-    执行测试用例。
-    """
-    logger.info("【API】收到执行测试请求")
+    执行测试用例（pytest + requests 方式）。
 
+    请求体：
+    {
+        "case_ids": [1, 2, 3],
+        "env_id": 1,
+        "concurrency": 5,        # pytest-xdist 并发数（可选）
+        "retry_times": 2,        # 失败重试次数（从配置文件读取，可选）
+        "fail_fast": false       # 失败快速停止（可选）
+    }
+
+    响应：
+    {
+        "code": 200,
+        "message": "success",
+        "data": {
+            "execution_id": "exec-xxx",
+            "status": "completed",
+            "summary": {
+                "total": 10,
+                "passed": 8,
+                "failed": 2,
+                "skipped": 0,
+                "success_rate": 80.0
+            },
+            "duration_seconds": 12.5,
+            "report_url": "/api/auto_test/report/exec-xxx",
+            "allure_results_dir": "outputs/allure-results/exec-xxx"
+        }
+    }
+    """
+    from common.config_loader import get_config
+    from common.test_executor.test_case_executor import TestCaseExecutor
+    from common.test_executor.pytest_generator import PytestGenerator
+    from core.runner import TestRunner, RunConfig, ExecutionMode
+
+    logger.info("【API-Execute】收到测试执行请求")
+
+    # 1. 解析请求参数
     payload = request.get_json(silent=True) or {}
     case_ids = payload.get("case_ids", [])
     env_id = payload.get("env_id")
     concurrency = payload.get("concurrency", 5)
-    mode = payload.get("mode", "parallel")
+
+    # 从配置文件读取重试次数（可被请求参数覆盖）
+    config_loader = get_config()
+    retry_times = payload.get("retry_times", config_loader.retry_times)
+    fail_fast = payload.get("fail_fast", config_loader.fail_fast)
+    default_timeout = payload.get("timeout", config_loader.default_timeout)
 
     if not case_ids:
-        return _json_response({"code": 400, "message": "缺少 case_ids", "data": None}, 400)
+        return _json_response({"code": 400, "message": "缺少 case_ids 参数", "data": None}, 400)
 
-    test_cases = _load_test_cases_from_db(case_ids)
-    if not test_cases:
-        return _json_response({"code": 404, "message": "未找到测试用例", "data": None}, 404)
+    # 2. 生成执行 ID
+    execution_id = f"exec-{uuid_module.uuid4().hex[:12]}"
 
-    env_config = _load_env_config(env_id)
-    exec_config = CONFIG.get("test_execution", {})
+    # 3. 加载用例（从 DB）
+    try:
+        executor = TestCaseExecutor()
+        cases = executor.load_cases(case_ids, env_id)
+        if not cases:
+            return _json_response({"code": 404, "message": "未找到测试用例", "data": None}, 404)
+    except Exception as e:
+        logger.exception("【API-Execute】加载用例失败")
+        return _json_response({"code": 500, "message": f"加载用例失败: {e}", "data": None}, 500)
 
-    runner = APITestRunner(
-        env_config=env_config,
-        concurrency=min(concurrency, exec_config.get("max_concurrency", 20)),
-        default_timeout=exec_config.get("default_timeout", 30),
-        max_retry=exec_config.get("retry_times", 2),
+    # 4. 获取环境 base_url
+    base_url = "http://localhost:5000"
+    if env_id:
+        from common.db_mapper.environment_config_mapper import EnvironmentConfigMapper
+        env_mapper = EnvironmentConfigMapper()
+        env_cfg = env_mapper.get_by_id(env_id)
+        if env_cfg and hasattr(env_cfg, "base_url"):
+            base_url = env_cfg.base_url or base_url
+
+    # 5. 生成 pytest 测试文件
+    try:
+        generator = PytestGenerator(output_dir=config_loader.generated_tests_dir)
+        test_file_path = generator.generate(
+            cases=cases,
+            execution_id=execution_id,
+            base_url=base_url,
+            retry_times=retry_times,
+            timeout=default_timeout
+        )
+        logger.info("【API-Execute】生成测试文件: %s", test_file_path)
+    except Exception as e:
+        logger.exception("【API-Execute】生成测试文件失败")
+        return _json_response({"code": 500, "message": f"生成测试文件失败: {e}", "data": None}, 500)
+
+    # 6. 构建 pytest 执行配置
+    allure_results_dir = os.path.join(config_loader.allure_results_dir, execution_id)
+    os.makedirs(allure_results_dir, exist_ok=True)
+
+    # 根据 concurrency 决定执行模式
+    if concurrency > 1:
+        mode = ExecutionMode.DISTRIBUTED
+        workers = concurrency
+    else:
+        mode = ExecutionMode.SEQUENTIAL
+        workers = "auto"
+
+    run_config = RunConfig(
+        test_paths=[test_file_path],
+        mode=mode,
+        repeat_count=retry_times,
+        workers=workers,
+        allure_results_dir=allure_results_dir,
+        allure_report_dir=os.path.join(config_loader.report_dir, execution_id),
+        fail_fast=fail_fast,
+        verbose=True,
+        capture="sys",
+        timeout=default_timeout,
     )
 
-    execution_id = f"exec-{uuid_module.uuid4().hex[:12]}"
-    results = runner.execute_batch(test_cases, mode=mode)
-    summary = runner.get_summary()
+    # 7. 执行 pytest
+    try:
+        runner = TestRunner(run_config)
+        result = runner.run()
+        logger.info("【API-Execute】pytest 执行完成: %s", result)
+    except Exception as e:
+        logger.exception("【API-Execute】pytest 执行失败")
+        return _json_response({"code": 500, "message": f"执行失败: {e}", "data": None}, 500)
 
-    report_gen = ReportGenerator(output_dir=REPORT_DIR)
-    report_path = report_gen.generate_html_report(results, summary, execution_id)
-    json_report_path = report_gen.generate_json_report(results, summary, execution_id)
+    # 8. 生成 Allure 报告
+    allure_report_dir = ""
+    try:
+        allure_report_dir = runner.generate_allure_report(
+            results_dir=allure_results_dir,
+            report_dir=run_config.allure_report_dir
+        )
+    except Exception as e:
+        logger.warning("【API-Execute】生成 Allure 报告失败: %s", e)
 
-    _save_execution_record(execution_id, case_ids, summary, report_path, json_report_path)
+    # 9. 回写执行结果到 DB
+    try:
+        for case in cases:
+            case_status = "success" if result.passed > 0 else "failed"
+            executor.save_execution_result(case.db_id, case_status)
+    except Exception as e:
+        logger.warning("【API-Execute】回写执行结果失败: %s", e)
 
+    # 10. 构建响应
     return _json_response({
         "code": 200,
         "message": "success",
         "data": {
             "execution_id": execution_id,
             "status": "completed",
-            "summary": summary,
-            "report_url": f"/api/auto_test/report/{execution_id}",
-            "results_preview": [_result_preview(r) for r in results[:5]],
+            "summary": {
+                "total": result.total,
+                "passed": result.passed,
+                "failed": result.failed,
+                "skipped": result.skipped,
+                "success_rate": result.success_rate,
+            },
+            "duration_seconds": result.duration_seconds,
+            "exit_code": result.exit_code,
+            "report_url": f"/api/auto_test/report/{execution_id}" if allure_report_dir else None,
+            "allure_results_dir": allure_results_dir,
         }
     })
 

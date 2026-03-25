@@ -10,9 +10,10 @@ Base = declarative_base()
 
 class ReviewRecordStatus(enum.Enum):
     """审核记录状态枚举"""
-    PENDING = "pending"  # 待审核
+    PENDING = "pending"    # 待审核
     APPROVED = "approved"  # 已通过
     REJECTED = "rejected"  # 已拒绝
+    FAILED = "failed"     # 失败
 
 
 class ReviewRecordType(enum.Enum):
@@ -69,10 +70,10 @@ class ReviewRecord(Base):
 
     # 审核状态
     status = Column(
-        Enum('pending', 'approved', 'rejected'),
+        Enum('pending', 'approved', 'rejected', 'failed'),
         nullable=False,
         default='pending',
-        comment='审核状态: pending-待审核, approved-已通过, rejected-已拒绝'
+        comment='审核状态: pending-待审核, approved-已通过, rejected-已拒绝, failed-失败'
     )
 
     # 生成结果

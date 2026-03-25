@@ -7,6 +7,7 @@ RAG文档处理API接口
 
 import os
 import json
+import logging
 import asyncio
 import uuid
 from pathlib import Path
@@ -16,12 +17,14 @@ from typing import Dict, List, Any, Optional
 from flask import Blueprint, request, jsonify, current_app
 from werkzeug.utils import secure_filename
 
+_logger = logging.getLogger(__name__)
+
 # 导入RAG服务
 try:
     from common.rag.services.rag_services import RAGService
     from common.rag.core.models import DocumentType
 except ImportError as e:
-    current_app.logger.error(f"RAG模块导入失败: {e}")
+    _logger.error(f"RAG模块导入失败: {e}")
     RAGService = None
 
 # 创建蓝图
@@ -39,18 +42,20 @@ MAX_FILE_SIZE = 50 * 1024 * 1024  # 50MB
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
 def get_rag_service():
-    """获取RAG服务实例"""
+    """获取RAG服务实例
+
+    注意：此函数会在后台线程中调用，禁止使用 current_app。
+    统一使用模块级 _logger。
+    """
     global rag_service
     if rag_service is None and RAGService is not None:
         try:
             import os
-            # 获取项目根目录
-            # 尝试多种可能的配置目录
             base_dirs = [
-                os.path.dirname(os.path.dirname(os.path.abspath(__file__))),  # api目录的父目录
-                os.getcwd(),  # 当前工作目录
+                os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                os.getcwd(),
             ]
-            
+
             config_dir = None
             for base_dir in base_dirs:
                 test_path = os.path.join(base_dir, "app", "config", "rag", "business_modules.json")
@@ -58,19 +63,18 @@ def get_rag_service():
                     config_dir = os.path.join(base_dir, "app", "config")
                     print(f"[DEBUG] 找到配置目录: {config_dir}")
                     break
-            
+
             if config_dir is None:
-                # 使用绝对路径的兜底方案
                 config_dir = os.path.abspath("app/config")
                 print(f"[DEBUG] 使用默认配置目录: {config_dir}")
-            
+
             rag_service = RAGService(config_dir=config_dir)
             print(f"[DEBUG] RAG服务初始化成功，业务模块: {list(rag_service.get_business_modules().keys())}")
-            current_app.logger.info("RAG服务初始化成功")
+            _logger.info("RAG服务初始化成功")
         except Exception as e:
-            current_app.logger.error(f"RAG服务初始化失败: {e}")
+            _logger.error(f"RAG服务初始化失败: {e}")
             import traceback
-            current_app.logger.error(traceback.format_exc())
+            _logger.error(traceback.format_exc())
             return None
     return rag_service
 

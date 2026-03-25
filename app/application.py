@@ -40,6 +40,8 @@ try:
     from api.http_page_test_case_generate import page_test_case_bp
     from api.http_api_interface_xmind import api_interface_xmind_bp
     from api.http_api_auto_test import api_auto_test_bp
+    from api.http_ai_enhanced_generate_cases import enhanced_generate_opt
+    from app.routes import assertions_bp, data_factory_bp, tasks_bp
 except Exception as e:
     print('异常信息' + str(e))
     exit(0)
@@ -278,6 +280,10 @@ app.register_blueprint(comparison_bp, url_prefix="/comparison")
 app.register_blueprint(page_test_case_bp, url_prefix="/page_test_case")
 app.register_blueprint(api_interface_xmind_bp, url_prefix="/api_interface_xmind")
 app.register_blueprint(api_auto_test_bp, url_prefix="/api/auto_test")
+app.register_blueprint(enhanced_generate_opt, url_prefix="/ai_service")
+app.register_blueprint(assertions_bp)
+app.register_blueprint(data_factory_bp)
+app.register_blueprint(tasks_bp)
 
 
 # 在应用创建后立即检查系统状态

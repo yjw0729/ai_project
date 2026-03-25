@@ -599,7 +599,7 @@ def generate_api_test_cases(
         logger.info("【生成用例】字段路径列表: %s", all_field_paths)
 
     # 基于“字段路径”分批，优先覆盖更多路径；每批4个路径
-    batch_size = 2  # 进一步调小单批字段数，降低截断风险
+    batch_size = 3  # 3字段/批，平衡截断风险与覆盖率
     batches: List[List[str]] = []
     if all_field_paths:
         for i in range(0, len(all_field_paths), batch_size):

@@ -17,7 +17,49 @@ logger = logging.getLogger(__name__)
 
 
 DASHSCOPE_API_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"
-DEFAULT_MODEL = "qwen-turbo"
+DEFAULT_MODEL = "qwen-plus"
+
+# 各模型 max_tokens 上限（超出此值的请求会被自动裁剪到上限）
+# 同时记录各模型的上下文窗口大小（tokens）
+MODEL_CONTEXT_LIMITS = {
+    # VLM 多模态模型
+    "qwen-vl-plus":           {"context": 32_000,   "max_output": 8_000},
+    "qwen-vl-max":           {"context": 32_000,   "max_output": 8_000},
+    "qwen-vl-max-2025-01-15":  {"context": 32_000, "max_output": 8_000},
+    "qwen-vl-plus-2025-01-15": {"context": 32_000,"max_output": 8_000},
+    # 3.5-plus 高性能模型（128K 上下文窗口）
+    "qwen-plus":              {"context": 128_000,  "max_output": 32_000},
+    "qwen-plus-2025-01-25":  {"context": 128_000,  "max_output": 32_000},
+    "qwen-plus-latest":      {"context": 128_000,  "max_output": 32_000},
+    "qwen3.5-plus":          {"context": 128_000,  "max_output": 32_000},
+    # turbo 快速模型
+    "qwen-turbo":            {"context": 131_072,  "max_output": 8_000},
+    "qwen-turbo-latest":     {"context": 131_072,  "max_output": 8_000},
+    # max 旗舰模型
+    "qwen-max":              {"context": 32_000,   "max_output": 8_000},
+    "qwen-max-long":         {"context": 1_048_576,"max_output": 8_000},
+}
+
+
+def _cap_max_tokens(model: str, max_tokens: int) -> int:
+    """根据模型限制裁剪 max_tokens，不破坏默认行为。"""
+    limits = MODEL_CONTEXT_LIMITS.get(model.lower(), {})
+    limit = limits.get("max_output", max_tokens)
+    return min(max_tokens, limit)
+
+
+def get_model_context_limit(model: str) -> int:
+    """获取模型的上下文窗口上限（单位: tokens）。"""
+    return MODEL_CONTEXT_LIMITS.get(model.lower(), {}).get("context", 32_000)
+
+
+def estimate_tokens(text: str) -> int:
+    """估算文本的 token 数量（按中文4字符≈1 token，英文1单词≈1.3 token 计算）。"""
+    if not text:
+        return 0
+    chinese_chars = sum(1 for c in text if '\u4e00' <= c <= '\u9fff')
+    non_chinese = len(text) - chinese_chars
+    return int(chinese_chars / 4 + non_chinese / 1.3)
 
 
 def _normalize_api_url(api_url: str) -> str:
@@ -72,7 +114,7 @@ class LLMClient:
             "model": model or self.model,
             "messages": messages,
             "temperature": temperature if temperature is not None else self.temperature,
-            "max_tokens": max_tokens or self.max_tokens,
+            "max_tokens": _cap_max_tokens(model or self.model, max_tokens or self.max_tokens),
         }
         if extra:
             payload.update(extra)
@@ -147,6 +189,116 @@ class LLMClient:
             logger.warning("【大模型响应】finish_reason=length，可能因max_tokens导致截断，建议调高max_tokens或精简prompt。")
 
         return content, data
+
+    def _split_into_chunks(self, text: str, max_chars: int) -> List[str]:
+        """
+        将长文本按段落分割为多个块，每个块不超过 max_chars 字符。
+        优先在段落边界（空行）和句号处分割，保证语义完整性。
+        """
+        if len(text) <= max_chars:
+            return [text]
+
+        chunks = []
+        paragraphs = text.split('\n\n')
+        current_chunk = ""
+
+        for para in paragraphs:
+            para = para.strip()
+            if not para:
+                continue
+            # 如果单个段落就超过 max_chars，再按句子分割
+            if len(para) > max_chars:
+                if current_chunk.strip():
+                    chunks.append(current_chunk.strip())
+                    current_chunk = ""
+                sentences = re.split(r'(?<=[。！？.!?])', para)
+                for sent in sentences:
+                    sent = sent.strip()
+                    if not sent:
+                        continue
+                    if len(current_chunk) + len(sent) + 2 <= max_chars:
+                        current_chunk += ("\n\n" if current_chunk else "") + sent
+                    else:
+                        if current_chunk.strip():
+                            chunks.append(current_chunk.strip())
+                        current_chunk = sent
+                continue
+            # 普通段落，检查加入后是否超限
+            if len(current_chunk) + len(para) + 2 <= max_chars:
+                current_chunk += ("\n\n" if current_chunk else "") + para
+            else:
+                if current_chunk.strip():
+                    chunks.append(current_chunk.strip())
+                current_chunk = para
+
+        if current_chunk.strip():
+            chunks.append(current_chunk.strip())
+        return chunks
+
+    def chat_batch(
+        self,
+        prompts: List[str],
+        system_prompt: Optional[str] = None,
+        max_tokens: Optional[int] = None,
+        temperature: Optional[float] = None,
+        parallel: bool = True,
+    ) -> List[str]:
+        """
+        批量调用 LLM，支持并行和串行两种模式。
+
+        Args:
+            prompts: 待处理的所有 prompt 列表
+            system_prompt: 统一的系统提示词
+            max_tokens: 每个请求的最大输出 token 数
+            temperature: 温度参数
+            parallel: True=并行调用（并发），False=串行调用
+
+        Returns:
+            每个 prompt 对应的 LLM 响应列表
+        """
+        if not prompts:
+            return []
+
+        if parallel:
+            from concurrent.futures import ThreadPoolExecutor, as_completed
+            # 并行调用，并发数限制为 5，避免触发 API 限流
+            with ThreadPoolExecutor(max_workers=5) as executor:
+                futures = {
+                    executor.submit(
+                        self.chat_with_prompt,
+                        prompt,
+                        system_prompt=system_prompt,
+                        max_tokens=max_tokens,
+                        temperature=temperature,
+                    ): i
+                    for i, prompt in enumerate(prompts)
+                }
+                results = ["" for _ in range(len(prompts))]
+                for future in as_completed(futures):
+                    idx = futures[future]
+                    try:
+                        content, _ = future.result()
+                        results[idx] = content
+                    except Exception as e:
+                        logger.error("【并行LLM调用】第 %d 个请求失败: %s", idx, str(e))
+                        results[idx] = ""
+                return results
+        else:
+            # 串行调用
+            results = []
+            for i, prompt in enumerate(prompts):
+                try:
+                    content, _ = self.chat_with_prompt(
+                        prompt,
+                        system_prompt=system_prompt,
+                        max_tokens=max_tokens,
+                        temperature=temperature,
+                    )
+                    results.append(content)
+                except Exception as e:
+                    logger.error("【串行LLM调用】第 %d/%d 个请求失败: %s", i + 1, len(prompts), str(e))
+                    results.append("")
+            return results
 
     def chat_with_prompt(
         self,

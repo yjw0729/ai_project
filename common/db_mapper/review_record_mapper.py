@@ -283,6 +283,223 @@ class ReviewRecordMapper:
             logger.error(f"[ReviewRecordMapper] 更新JSON示例失败: {e}", exc_info=True)
             raise
 
+    def update_fields(
+        self,
+        doc_id: str,
+        document_title: str = None,
+        project_background: str = None,
+        business_summary: str = None,
+        business_module: str = None,
+        interface_list: list = None,
+        flow_chart_analysis: list = None,
+        image_analysis: list = None,
+        status: str = None,
+        reviewer: str = None,
+        review_comment: str = None,
+        sync_summary: bool = True,
+    ) -> dict:
+        """
+        精细化字段更新：只更新传入了非 None 值的字段，其他字段保持原样。
+
+        接口列表 diff 逻辑（interface_list is not None 时生效）：
+        - DB 中已有（按 interface_name+interface_path+interface_method 匹配）：
+          → 只更新 interface_info dict 中非 None 的子字段，其他字段保留
+        - DB 中没有 → create 新行
+        - DB 中有但前端未传 → delete 该行
+
+        文档级字段（project_background / business_summary 等）：
+        → bulk update 所有 doc_id 匹配的行，只 SET 非 None 的列
+
+        参数：
+        - doc_id: 文档UUID（必填）
+        - document_title / project_background / business_summary / business_module: 文档级文本字段
+        - interface_list: 前端传来的完整接口列表（None → 不做接口列表 diff）
+        - flow_chart_analysis / image_analysis: JSON 列表，文档级
+        - status / reviewer / review_comment: 审核元数据
+        - sync_summary: 是否同步 summary 表（默认 True）
+        """
+        logger.info(f"[ReviewRecordMapper.update_fields] doc_id={doc_id}, "
+                    f"doc_fields={bool(document_title or project_background or business_summary)}, "
+                    f"interface_list={interface_list is not None}, "
+                    f"flow_chart={flow_chart_analysis is not None}, "
+                    f"status={status}")
+
+        try:
+            with self.session_scope() as session:
+                # 1. 收集需要 bulk update 的文档级字段
+                doc_level_values = {'updated_time': datetime.now()}
+                if document_title is not None:
+                    doc_level_values['document_title'] = document_title
+                if project_background is not None:
+                    doc_level_values['project_background'] = project_background
+                if business_summary is not None:
+                    doc_level_values['business_summary'] = business_summary
+                if business_module is not None:
+                    doc_level_values['business_module'] = business_module
+                if status is not None:
+                    doc_level_values['status'] = status
+                if reviewer is not None:
+                    doc_level_values['reviewer'] = reviewer
+                if review_comment is not None:
+                    doc_level_values['review_comment'] = review_comment
+                if flow_chart_analysis is not None:
+                    doc_level_values['flow_chart_analysis'] = flow_chart_analysis
+                if image_analysis is not None:
+                    doc_level_values['image_analysis'] = image_analysis
+
+                # 执行 bulk update（所有 doc_id 匹配的行）
+                if doc_level_values:
+                    updated_count = session.query(self.entity_class).filter(
+                        self.entity_class.doc_id == doc_id
+                    ).update(doc_level_values, synchronize_session=False)
+                    logger.info(f"[ReviewRecordMapper.update_fields] 批量更新文档级字段，"
+                                f"影响 {updated_count} 条记录")
+
+                # 2. 接口列表 diff（仅当 interface_list 非 None 时执行）
+                if interface_list is not None:
+                    # 读取 DB 中所有接口记录（按 interface_name + interface_path + interface_method 定位）
+                    db_interface_records = session.query(self.entity_class).filter(
+                        self.entity_class.doc_id == doc_id,
+                        self.entity_class.interface_name.isnot(None),
+                        self.entity_class.interface_name != ''
+                    ).all()
+
+                    # 构建 DB 端唯一键 → entity 映射
+                    db_key_to_entity = {}
+                    for ent in db_interface_records:
+                        key = (ent.interface_name or '').strip().lower() + '|' + \
+                              (ent.interface_path or '').strip().lower() + '|' + \
+                              (ent.interface_method or '').strip().upper()
+                        db_key_to_entity[key] = ent
+
+                    # 构建前端唯一键集合
+                    fe_keys = set()
+                    for iface in interface_list:
+                        key = (iface.get('name', '') or '').strip().lower() + '|' + \
+                              (iface.get('path', '') or '').strip().lower() + '|' + \
+                              (iface.get('method', 'GET') or 'GET').strip().upper()
+                        fe_keys.add(key)
+
+                    # 2a. 找出 DB 有但前端没有的 → delete
+                    keys_to_delete = set(db_key_to_entity.keys()) - fe_keys
+                    for key in keys_to_delete:
+                        ent = db_key_to_entity[key]
+                        logger.info(f"[ReviewRecordMapper.update_fields] 删除接口记录: "
+                                    f"{ent.interface_name} {ent.interface_method} {ent.interface_path}")
+                        session.delete(ent)
+
+                    # 2b. 遍历前端接口列表 → update 或 create
+                    new_interface_records = []
+                    for iface in interface_list:
+                        key = (iface.get('name', '') or '').strip().lower() + '|' + \
+                              (iface.get('path', '') or '').strip().lower() + '|' + \
+                              (iface.get('method', 'GET') or 'GET').strip().upper()
+
+                        if key in db_key_to_entity:
+                            # update：只 SET 前端传了非 None 的字段
+                            ent = db_key_to_entity[key]
+                            if iface.get('name') is not None:
+                                ent.interface_name = iface.get('name')
+                            if iface.get('method') is not None:
+                                ent.interface_method = iface.get('method')
+                            if iface.get('path') is not None:
+                                ent.interface_path = iface.get('path')
+                            if iface.get('description') is not None:
+                                ent.interface_description = iface.get('description')
+                            if iface.get('request_params') is not None:
+                                ent.request_params = iface.get('request_params')
+                            if iface.get('request_json_sample') is not None:
+                                ent.request_json_sample = iface.get('request_json_sample')
+                            # 兼容前端字段名 request_json
+                            if iface.get('request_json') is not None:
+                                ent.request_json_sample = iface.get('request_json')
+                            if iface.get('response_json_sample') is not None:
+                                ent.response_json_sample = iface.get('response_json_sample')
+                            if iface.get('response_json') is not None:
+                                ent.response_json_sample = iface.get('response_json')
+                            if iface.get('response_params') is not None:
+                                ent.response_params = iface.get('response_params')
+                            if iface.get('process_flow') is not None:
+                                ent.process_flow = iface.get('process_flow')
+                            if iface.get('flow_chart_desc') is not None:
+                                ent.flow_chart_desc = iface.get('flow_chart_desc')
+                            if iface.get('detail_flow_analysis') is not None:
+                                ent.detail_flow_analysis = iface.get('detail_flow_analysis')
+                            if iface.get('interface_data') is not None:
+                                ent.interface_data = iface.get('interface_data')
+                            if iface.get('image_analysis') is not None:
+                                ent.image_analysis = iface.get('image_analysis')
+                            ent.updated_time = datetime.now()
+                            logger.info(f"[ReviewRecordMapper.update_fields] 更新接口: {key}")
+                        else:
+                            # create 新行
+                            new_ent = self.entity_class(
+                                doc_id=doc_id,
+                                record_type='interface',
+                                document_title=document_title or '',
+                                business_module=business_module or '',
+                                project_background=project_background or '',
+                                business_summary=business_summary or '',
+                                interface_name=iface.get('name', ''),
+                                interface_method=iface.get('method', 'GET'),
+                                interface_path=iface.get('path', ''),
+                                interface_description=iface.get('description', ''),
+                                request_params=iface.get('request_params', ''),
+                                request_json_sample=iface.get('request_json') or iface.get('request_json_sample', ''),
+                                response_json_sample=iface.get('response_json') or iface.get('response_json_sample', ''),
+                                response_params=iface.get('response_params', ''),
+                                process_flow=iface.get('process_flow', ''),
+                                flow_chart_desc=iface.get('flow_chart_desc', ''),
+                                detail_flow_analysis=iface.get('detail_flow_analysis', ''),
+                                interface_data=iface.get('interface_data') or iface,
+                                image_analysis=iface.get('image_analysis', []),
+                                status=status or 'pending',
+                                reviewer=reviewer,
+                                review_comment=review_comment,
+                                creator='system',
+                            )
+                            session.add(new_ent)
+                            new_interface_records.append(new_ent)
+                            logger.info(f"[ReviewRecordMapper.update_fields] 新增接口: {key}")
+
+                    logger.info(f"[ReviewRecordMapper.update_fields] 接口 diff 完成，"
+                                f"新增 {len(new_interface_records)}，删除 {len(keys_to_delete)}")
+
+                session.flush()
+
+                # 返回代表记录
+                entity = session.query(self.entity_class).filter(
+                    self.entity_class.doc_id == doc_id
+                ).first()
+                result = self._to_dict(entity) if entity else None
+
+            # 3. 同步 summary 表（只同步文档级计数和状态）
+            if sync_summary:
+                try:
+                    from common.db_mapper.review_summary_mapper import ReviewSummaryMapper
+                    if status is not None or reviewer is not None or review_comment is not None:
+                        ReviewSummaryMapper(db_key=self.db_key).update_status(
+                            doc_id=doc_id,
+                            status=status,
+                            reviewer=reviewer,
+                            review_comment=review_comment,
+                        )
+                    if interface_list is not None:
+                        ReviewSummaryMapper(db_key=self.db_key).upsert(
+                            doc_id=doc_id,
+                            document_title=document_title,
+                            interface_count=len(interface_list),
+                        )
+                except Exception as se:
+                    logger.warning(f"[ReviewRecordMapper.update_fields] 同步 summary 表失败（不影响主流程）: {se}")
+
+            logger.info(f"[ReviewRecordMapper.update_fields] 完成, doc_id={doc_id}")
+            return result
+
+        except Exception as e:
+            logger.error(f"[ReviewRecordMapper.update_fields] 失败: {e}", exc_info=True)
+            raise
+
     def check_json_samples_completed(self, doc_id: str) -> dict:
         """检查所有接口的JSON示例是否都已获取完成"""
         logger.info(f"[ReviewRecordMapper] 检查JSON示例完成状态, doc_id: {doc_id}")

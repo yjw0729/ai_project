@@ -14,6 +14,7 @@ import uuid
 import asyncio
 import logging
 from datetime import datetime
+from typing import Optional, List, Dict, Any
 from flask import Blueprint, request, jsonify, make_response, send_file
 from werkzeug.utils import secure_filename
 from pathlib import Path
@@ -39,6 +40,7 @@ from api.http_rag_document import get_rag_service, UPLOAD_FOLDER, ALLOWED_EXTENS
 from common.db_mapper.review_record_mapper import ReviewRecordMapper
 from common.db_mapper.review_summary_mapper import ReviewSummaryMapper
 from common.config import get_sql_query, get_default_settings
+from common.data_structures.review_data import ReviewData
 
 # ========== 健壮性基础设施导入（懒加载，优雅降级）==========
 try:
@@ -231,6 +233,181 @@ def _save_request_response_to_file(doc_id: str, interface_name: str, request_pro
 
 # ====== 新增：结构化文档解析 ======
 
+# --- 分批处理辅助函数 ---
+import re as _re
+
+def _split_long_prompt(
+    content: str,
+    max_chars_per_chunk: int,
+    overlap_chars: int = 200,
+) -> List[str]:
+    """
+    将超长文档内容智能切分为多个小块，每块带适当重叠保证上下文连续性。
+
+    Args:
+        content: 原始文档内容
+        max_chars_per_chunk: 每个块的最大字符数
+        overlap_chars: 块与块之间的重叠字符数（保持上下文）
+
+    Returns:
+        切分后的文本块列表
+    """
+    if len(content) <= max_chars_per_chunk:
+        return [content]
+
+    chunks = []
+    # 优先在双换行（段落边界）处分割
+    paragraphs = content.split('\n\n')
+    current = ""
+
+    for para in paragraphs:
+        para = para.strip()
+        if not para:
+            continue
+
+        # 单段落超长：按句子分割
+        if len(para) > max_chars_per_chunk:
+            if current.strip():
+                chunks.append(current.strip())
+                current = ""
+            sentences = _re.split(r'(?<=[。！？.!?])', para)
+            sub = ""
+            for sent in sentences:
+                sent = sent.strip()
+                if not sent:
+                    continue
+                if len(sub) + len(sent) + 2 <= max_chars_per_chunk:
+                    sub += ("\n\n" if sub else "") + sent
+                else:
+                    if sub.strip():
+                        chunks.append(sub.strip())
+                    sub = sent
+            if sub.strip():
+                chunks.append(sub.strip())
+            continue
+
+        # 普通段落
+        if len(current) + len(para) + 2 <= max_chars_per_chunk:
+            current += ("\n\n" if current else "") + para
+        else:
+            if current.strip():
+                chunks.append(current.strip())
+            current = para
+
+    if current.strip():
+        chunks.append(current.strip())
+
+    return chunks
+
+
+def _merge_batch_results(results: List[dict], merge_key: str) -> List[dict]:
+    """
+    合并多个分批调用的 JSON 结果。
+
+    Args:
+        results: 每个分块的 LLM 返回的 dict 列表
+        merge_key: 需要合并的字段名（如 "interfaces", "nodes"）
+
+    Returns:
+        合并去重后的结果列表
+    """
+    merged = []
+    seen_ids = set()
+    for result in results:
+        if not result:
+            continue
+        if isinstance(result, dict) and merge_key in result:
+            items = result[merge_key]
+        elif isinstance(result, list):
+            items = result
+        else:
+            continue
+        for item in items:
+            if isinstance(item, dict):
+                item_id = item.get("id") or item.get("name") or str(item)
+                if item_id not in seen_ids:
+                    seen_ids.add(item_id)
+                    merged.append(item)
+            else:
+                if item not in seen_ids:
+                    seen_ids.add(str(item))
+                    merged.append(item)
+    return merged
+
+
+def _call_llm_batch(
+    rag_service,
+    prompts: List[str],
+    max_tokens: int = 16000,
+    temperature: float = 0.2,
+    parallel: bool = True,
+) -> List[str]:
+    """
+    批量调用 LLM（串行或并行），适用于分块处理后的结果合并。
+
+    Args:
+        rag_service: RAG 服务实例
+        prompts: 待处理的 prompt 列表
+        max_tokens: 每个请求的最大输出 token
+        temperature: 温度参数
+        parallel: 是否并行调用
+
+    Returns:
+        每个 prompt 对应的 LLM 响应字符串列表
+    """
+    import asyncio
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+
+    if parallel:
+        def _call_one(idx_prompt):
+            i, p = idx_prompt
+            try:
+                return loop.run_until_complete(
+                    rag_service._generate_answer(
+                        prompt=p,
+                        temperature=temperature,
+                        max_tokens=max_tokens,
+                    )
+                )
+            except Exception as e:
+                import logging
+                logging.getLogger(__name__).error("【分批调用】第 %d 块失败: %s", i + 1, str(e))
+                return ""
+        with ThreadPoolExecutor(max_workers=5) as executor:
+            futures = {executor.submit(_call_one, (i, p)): i for i, p in enumerate(prompts)}
+            results = ["" for _ in range(len(prompts))]
+            for future in as_completed(futures):
+                idx = futures[future]
+                try:
+                    results[idx] = future.result()
+                except Exception as e:
+                    import logging
+                    logging.getLogger(__name__).error("【分批调用】第 %d 块异常: %s", idx + 1, str(e))
+        return results
+    else:
+        results = []
+        for i, p in enumerate(prompts):
+            try:
+                resp = loop.run_until_complete(
+                    rag_service._generate_answer(
+                        prompt=p,
+                        temperature=temperature,
+                        max_tokens=max_tokens,
+                    )
+                )
+                results.append(resp)
+            except Exception as e:
+                import logging
+                logging.getLogger(__name__).error("【分批调用】第 %d/%d 块失败: %s", i + 1, len(prompts), str(e))
+                results.append("")
+        return results
+
+
+# --- 文档结构解析（主函数）---
+
 def parse_document_structure(document_content: str) -> dict:
     """
     解析文档结构，识别4大部分：
@@ -267,97 +444,66 @@ def parse_document_structure(document_content: str) -> dict:
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     try:
-        max_input_chars = 60000  # 增加输入长度，确保包含完整的API接口信息
+        # qwen-plus 128K 上下文，按 4:1 比例约 32K 字符输入，预留 8K 输出
+        # 单次可处理约 24K 字符的内容（prompt模板约 200 字符）
+        max_input_chars = 24000
         content = document_content[:max_input_chars]
 
-        prompt = DOC_STRUCTURE_PROMPT.format(content=content)
+        # 超长文档（>12K 字符）分两批处理再合并
+        if len(document_content) > 12000:
+            logger.info(f"[文档结构解析] 文档过长({len(document_content)}字符)，分批处理")
+            chunks = _split_long_prompt(document_content, max_chars_per_chunk=max_input_chars)
+            all_results = {}
+            for i, chunk in enumerate(chunks):
+                chunk_prompt = DOC_STRUCTURE_PROMPT.format(content=chunk)
+                rag = get_rag_service()
+                if not rag:
+                    raise RuntimeError("RAG服务未初始化")
+                resp = loop.run_until_complete(
+                    rag._generate_answer(
+                        prompt=chunk_prompt,
+                        temperature=0.2,
+                        max_tokens=16000,
+                    )
+                )
+                logger.info(f"[文档结构解析] 第 {i+1}/{len(chunks)} 块解析完成，响应长度={len(resp)}")
+                # 提取并合并结果
+                try:
+                    parsed = _try_parse_doc_structure(resp)
+                    for key in ["basic_knowledge", "service_content", "template_config", "api_section"]:
+                        val = parsed.get(key, "").strip()
+                        if val:
+                            all_results[key] = all_results.get(key, "") + ("\n\n" if all_results.get(key) else "") + val
+                except Exception as parse_err:
+                    logger.warning(f"[文档结构解析] 第 {i+1} 块解析失败: {parse_err}")
+            return {
+                "basic_knowledge": all_results.get("basic_knowledge", ""),
+                "service_content": all_results.get("service_content", ""),
+                "template_config": all_results.get("template_config", ""),
+                "api_section": all_results.get("api_section", ""),
+            }
 
+        # 短文档直接处理
+        prompt = DOC_STRUCTURE_PROMPT.format(content=content)
         rag = get_rag_service()
         if not rag:
             raise RuntimeError("RAG服务未初始化")
-
         result = loop.run_until_complete(
             rag._generate_answer(
                 prompt=prompt,
                 temperature=0.2,
-                max_tokens=8000,  # 增加输出token，确保完整返回所有接口信息
+                max_tokens=16000,
             )
         )
 
-        import re
-
-        # 尝试修复和解析JSON
-        def try_parse_json(json_str):
-            """尝试解析JSON，如果失败则尝试修复"""
-            # 先尝试直接解析
-            try:
-                return json.loads(json_str)
-            except json.JSONDecodeError:
-                pass
-
-            # 尝试修复：处理未转义的引号和换行符
-            try:
-                # 尝试找到有效的JSON块
-                json_match = re.search(r'\{[\s\S]*\}', json_str)
-                if json_match:
-                    json_str = json_match.group()
-
-                # 处理换行符在字符串中的问题
-                # 尝试逐行解析
-                lines = json_str.split('\n')
-                fixed_lines = []
-                in_string = False
-                for line in lines:
-                    if '"' in line:
-                        # 简单检查：奇数个引号表示字符串未结束
-                        quote_count = line.count('"')
-                        if quote_count % 2 == 1:
-                            # 字符串未结束，尝试找到结束引号
-                            line = line + '"'
-                    fixed_lines.append(line)
-
-                fixed_json = '\n'.join(fixed_lines)
-                return json.loads(fixed_json)
-            except json.JSONDecodeError:
-                pass
-
-            # 最后尝试：使用正则提取键值对
-            try:
-                result = {}
-                # 提取 basic_knowledge
-                match = re.search(r'"basic_knowledge"\s*:\s*"([^"]*)"', json_str, re.DOTALL)
-                if match:
-                    result["basic_knowledge"] = match.group(1)
-                # 提取 service_content
-                match = re.search(r'"service_content"\s*:\s*"([^"]*)"', json_str, re.DOTALL)
-                if match:
-                    result["service_content"] = match.group(1)
-                # 提取 template_config
-                match = re.search(r'"template_config"\s*:\s*"([^"]*)"', json_str, re.DOTALL)
-                if match:
-                    result["template_config"] = match.group(1)
-                # 提取 api_section
-                match = re.search(r'"api_section"\s*:\s*"([^"]*)"', json_str, re.DOTALL)
-                if match:
-                    result["api_section"] = match.group(1)
-
-                if result:
-                    return result
-            except:
-                pass
-
-            return None
-
-        json_match = re.search(r'\{.*\}', result, re.DOTALL)
-        if json_match:
-            parsed = try_parse_json(json_match.group())
-            if parsed:
-                return {
-                    "basic_knowledge": parsed.get("basic_knowledge", "").strip(),
-                    "service_content": parsed.get("service_content", "").strip(),
-                    "template_config": parsed.get("template_config", "").strip(),
-                    "api_section": parsed.get("api_section", "").strip(),
-                }
+        parsed = _try_parse_doc_structure(result)
+        if parsed:
+            return {
+                "basic_knowledge": parsed.get("basic_knowledge", "").strip(),
+                "service_content": parsed.get("service_content", "").strip(),
+                "template_config": parsed.get("template_config", "").strip(),
+                "api_section": parsed.get("api_section", "").strip(),
+            }
         logger.warning("文档结构解析失败，返回默认结构")
         return {
             "basic_knowledge": "",
@@ -375,6 +521,45 @@ def parse_document_structure(document_content: str) -> dict:
         }
     finally:
         loop.close()
+
+
+def _try_parse_doc_structure(json_str: str) -> Optional[dict]:
+    """解析文档结构 JSON，支持多种容错策略"""
+    import re as _re2
+
+    def _try_single(s: str) -> Optional[dict]:
+        try:
+            return json.loads(s)
+        except json.JSONDecodeError:
+            pass
+        return None
+
+    # 1. 直接解析
+    r = _try_single(json_str)
+    if r is not None:
+        return r
+
+    # 2. 提取 JSON 块 + 逐行修复引号
+    match = _re2.search(r'\{[\s\S]*?\}', json_str)
+    if match:
+        json_str = match.group()
+        lines = json_str.split('\n')
+        fixed = []
+        for line in lines:
+            if _re2.search(r'"[^"]*$', line):
+                line += '"'
+            fixed.append(line)
+        r = _try_single('\n'.join(fixed))
+        if r is not None:
+            return r
+
+    # 3. 正则提取键值对
+    result = {}
+    for key in ["basic_knowledge", "service_content", "template_config", "api_section"]:
+        m = _re2.search(rf'"{key}"\s*:\s*"([\s\S]*?)"(?=\s*[,}}])', json_str)
+        if m:
+            result[key] = m.group(1)
+    return result if result else None
 
 
 # 存储向量库的collection引用（临时方案，避免重复创建）
@@ -1124,9 +1309,25 @@ def generate_test_cases():
     # 用于跟踪需要清理的向量集合
     collections_to_cleanup = []
 
+    # 预先生成doc_id，用于RAG失败时更新状态
+    doc_id = str(uuid.uuid4())
+
     try:
         rag = get_rag_service()
         if not rag:
+            logger.error("RAG服务未初始化，尝试更新任务状态为失败")
+            try:
+                from common.db_mapper.review_summary_mapper import ReviewSummaryMapper
+                summary_mapper = ReviewSummaryMapper()
+                summary_mapper.update_status(
+                    doc_id=doc_id,
+                    status="failed",
+                    reviewer=None,
+                    review_comment="RAG服务初始化失败"
+                )
+                logger.info(f"已更新doc_id={doc_id}的状态为failed")
+            except Exception as status_err:
+                logger.warning(f"更新任务状态失败: {status_err}")
             return json_response({
                 "code": 500,
                 "message": "RAG服务初始化失败",
@@ -1160,8 +1361,7 @@ def generate_test_cases():
         document_title = request.form.get('document_title', file.filename.rsplit('.', 1)[0])
         business_module = request.form.get('business_module', '')
 
-        # 保存上传的文件
-        doc_id = str(uuid.uuid4())
+        # 保存上传的文件（doc_id已在函数开头预先生成，用于RAG失败时更新状态）
         new_filename = f"{doc_id}.{file_ext}"
         file_path = os.path.join(UPLOAD_FOLDER, new_filename)
         file.save(file_path)
@@ -1312,7 +1512,7 @@ def _generate_test_cases_smart(rag, doc_structure: dict, document_title: str,
             rag._generate_answer(
                 prompt=pre_analysis_prompt,
                 temperature=0.1,
-                max_tokens=15000,  # 大幅增加输出token限制，确保所有接口信息完整
+                max_tokens=16000,  # qwen-plus 32K 输出上限
             )
         )
 
@@ -1461,7 +1661,7 @@ def _generate_test_cases_smart(rag, doc_structure: dict, document_title: str,
                     rag._generate_answer(
                         prompt=interface_prompt,
                         temperature=0.2,
-                        max_tokens=8000,  # 大幅增加输出token限制，确保完整输出
+                        max_tokens=16000,  # qwen-plus 32K 输出上限
                     )
                 )
 
@@ -2392,74 +2592,9 @@ def extract_interface_json_samples(doc_id: str, interface_list: list, api_sectio
 _review_data_store = {}
 
 
-# ====== 审核数据结构 ======
-
-class ReviewData:
-    """审核数据结构"""
-    def __init__(self, doc_id: str, document_title: str, business_module: str = ""):
-        self.doc_id = doc_id
-        self.document_title = document_title
-        self.business_module = business_module
-        self.project_background = ""
-        self.business_summary = ""  # 服务内容摘要
-        self.interface_list = []  # 接口列表
-        self.flow_chart_analysis = []  # 流程图分析结果
-        self.status = "pending"  # pending, approved, rejected
-        self.created_at = datetime.now().isoformat()
-        self.updated_at = datetime.now().isoformat()
-        self.document_content = ""  # 原始文档内容（用于后续生成）
-        self.api_section = ""  # API部分内容（用于后续生成）
-        self.image_analysis = []  # 图片分析结果列表
-        # 需求文档专用字段
-        self.functional_modules = []  # 功能模块列表
-        self.business_flows = []  # 业务流程列表
-        self.business_rules = []  # 业务规则列表
-        self.inferred_interfaces = []  # 推断的接口列表
-        self.document_type = ""  # 文档类型：api_doc / product_design
-
-    def to_dict(self) -> dict:
-        return {
-            "doc_id": self.doc_id,
-            "document_title": self.document_title,
-            "business_module": self.business_module,
-            "project_background": self.project_background,
-            "business_summary": self.business_summary,
-            "interface_list": self.interface_list,
-            "flow_chart_analysis": self.flow_chart_analysis,
-            "image_analysis": self.image_analysis,
-            "status": self.status,
-            "created_at": self.created_at,
-            "updated_at": self.updated_at,
-            "functional_modules": self.functional_modules,
-            "business_flows": self.business_flows,
-            "business_rules": self.business_rules,
-            "inferred_interfaces": self.inferred_interfaces,
-            "document_type": self.document_type
-        }
-
-    @classmethod
-    def from_dict(cls, data: dict) -> 'ReviewData':
-        review = cls(
-            doc_id=data.get("doc_id", ""),
-            document_title=data.get("document_title", ""),
-            business_module=data.get("business_module", "")
-        )
-        review.project_background = data.get("project_background", "")
-        review.business_summary = data.get("business_summary", "")
-        review.interface_list = data.get("interface_list", [])
-        review.flow_chart_analysis = data.get("flow_chart_analysis", [])
-        review.status = data.get("status", "pending")
-        review.created_at = data.get("created_at", datetime.now().isoformat())
-        review.updated_at = data.get("updated_at", datetime.now().isoformat())
-        review.document_content = data.get("document_content", "")
-        review.api_section = data.get("api_section", "")
-        review.image_analysis = data.get("image_analysis", [])
-        review.functional_modules = data.get("functional_modules", [])
-        review.business_flows = data.get("business_flows", [])
-        review.business_rules = data.get("business_rules", [])
-        review.inferred_interfaces = data.get("inferred_interfaces", [])
-        review.document_type = data.get("document_type", "")
-        return review
+# ReviewData 已移至 common.data_structures.review_data
+# 保持向后兼容：ReviewData 仍可从本模块导入
+# （import 在文件顶部 from common.data_structures.review_data import ReviewData）
 
 
 # ====== 审核相关API接口 ======
@@ -2486,12 +2621,27 @@ def start_review():
     logger.info("【审核接口】开始启动审核流程")
     logger.info("=" * 80)
 
+    # 预先生成doc_id，用于RAG失败时更新状态
+    doc_id = str(uuid.uuid4())
+
     try:
         # 检查RAG服务
         logger.info("检查RAG服务状态...")
         rag = get_rag_service()
         if not rag:
-            logger.error("RAG服务未初始化")
+            logger.error("RAG服务未初始化，尝试更新任务状态为失败")
+            try:
+                from common.db_mapper.review_summary_mapper import ReviewSummaryMapper
+                summary_mapper = ReviewSummaryMapper()
+                summary_mapper.update_status(
+                    doc_id=doc_id,
+                    status="failed",
+                    reviewer=None,
+                    review_comment="RAG服务初始化失败"
+                )
+                logger.info(f"已更新doc_id={doc_id}的状态为failed")
+            except Exception as status_err:
+                logger.warning(f"更新任务状态失败: {status_err}")
             return json_response({
                 "code": 500,
                 "message": "RAG服务初始化失败",
@@ -2550,8 +2700,7 @@ def start_review():
 
         logger.info(f"文档标题: {document_title}, 业务模块: {business_module}, 文档类型: {DocumentType.get_type_name(document_type)}")
 
-        # 保存上传的文件
-        doc_id = str(uuid.uuid4())
+        # 保存上传的文件（doc_id已在函数开头预先生成，用于RAG失败时更新状态）
         new_filename = f"{doc_id}.{file_ext}"
         file_path = os.path.join(UPLOAD_FOLDER, new_filename)
         file.save(file_path)
@@ -2676,7 +2825,7 @@ def process_api_document(rag, file_path: str, file_ext: str, doc_id: str,
             rag._generate_answer(
                 prompt=pre_analysis_prompt,
                 temperature=0.1,
-                max_tokens=10000,
+                max_tokens=16000,  # qwen-plus 32K 输出上限
             )
         )
 
@@ -2744,6 +2893,24 @@ def process_api_document(rag, file_path: str, file_ext: str, doc_id: str,
             review_mapper = ReviewRecordMapper()
             db_records = review_mapper.save_from_review_data(review_data, creator="system")
             logger.info(f"审核记录已保存到数据库，共 {len(db_records)} 条记录")
+
+            # 同步写入汇总表（与需求文档保持一致）
+            try:
+                summary_mapper = ReviewSummaryMapper()
+                summary_mapper.upsert(
+                    doc_id=doc_id,
+                    document_title=document_title,
+                    business_module=business_module,
+                    document_type=DocumentType.API_DOC,
+                    interface_count=len(review_data.interface_list),
+                    image_count=len(review_data.image_analysis),
+                    general_image_count=len(review_data.image_analysis) - len(review_data.flow_chart_analysis),
+                    test_case_count=0,
+                    status='pending',
+                )
+                logger.info(f"汇总记录已写入: doc_id={doc_id}")
+            except Exception as summary_err:
+                logger.error(f"写入汇总表失败: {summary_err}", exc_info=True)
 
             # 异步获取接口JSON示例
             if review_data.interface_list and api_section:
@@ -2836,7 +3003,7 @@ def process_product_design_document(rag, file_path: str, file_ext: str, doc_id: 
             rag._generate_answer(
                 prompt=pre_analysis_prompt,
                 temperature=0.1,
-                max_tokens=8000,
+                max_tokens=16000,  # qwen-plus 32K 输出上限
             )
         )
 
@@ -2990,6 +3157,7 @@ def get_review_data(doc_id: str):
                     'response_json_sample': rec.get('response_json_sample', ''),
                     'response_params': rec.get('response_params', ''),
                     'process_flow': rec.get('process_flow', ''),
+                    'flow_chart_desc': rec.get('flow_chart_desc', ''),
                     'detail_flow_analysis': rec.get('detail_flow_analysis', ''),
                     'image_analysis': rec.get('image_analysis') or [],  # 该接口匹配的图片
                 })
@@ -3200,34 +3368,11 @@ def submit_review():
             logger.info(f"从内存读取: doc_id={doc_id}, status={review_data.status}")
         logger.info(f"当前审核状态: {review_data.status}")
 
-        # 更新审核数据
-        if 'project_background' in data:
-            old_bg = review_data.project_background
-            review_data.project_background = data['project_background']
-            logger.info(f"更新项目背景: {len(old_bg)} -> {len(review_data.project_background)} 字符")
-
-        if 'business_summary' in data:
-            old_summary = review_data.business_summary
-            review_data.business_summary = data['business_summary']
-            logger.info(f"更新业务摘要: {len(old_summary)} -> {len(review_data.business_summary)} 字符")
-
-        if 'interface_list' in data:
-            old_count = len(review_data.interface_list)
-            review_data.interface_list = data['interface_list']
-            logger.info(f"更新接口列表: {old_count} -> {len(review_data.interface_list)} 个接口")
-
-        if 'flow_chart_analysis' in data:
-            old_flow_count = len(review_data.flow_chart_analysis)
-            review_data.flow_chart_analysis = data['flow_chart_analysis']
-            logger.info(f"更新流程图分析: {old_flow_count} -> {len(review_data.flow_chart_analysis)} 个")
-
-        # 更新状态
+        # action 校验（提前，避免后续重复）
         if action == 'approve':
-            review_data.status = 'approved'
-            logger.info("审核操作: 批准 (approve)")
+            new_status = 'approved'
         elif action == 'reject':
-            review_data.status = 'rejected'
-            logger.info("审核操作: 拒绝 (reject)")
+            new_status = 'rejected'
         else:
             logger.warning(f"无效的操作类型: {action}")
             return json_response({
@@ -3236,24 +3381,59 @@ def submit_review():
                 "data": None
             }, 400)
 
-        review_data.updated_at = datetime.now().isoformat()
+        # 计算 flow_chart_analysis（与原逻辑一致：合并 DB 值 + 前端传值）
+        merged_flow_chart = None
+        if 'flow_chart_analysis' in data:
+            existing = review_data.flow_chart_analysis or []
+            incoming = data.get('flow_chart_analysis') or []
+            seen = {str(f) for f in existing}
+            merged_flow_chart = [f for f in existing]
+            for f in incoming:
+                if str(f) not in seen:
+                    merged_flow_chart.append(f)
+                    seen.add(str(f))
 
-        # 更新数据库中的审核记录
+        # 更新内存对象（统一的精确更新逻辑）
+        if 'project_background' in data:
+            logger.info(f"更新项目背景: {len(review_data.project_background)} -> {len(data['project_background'])} 字符")
+            review_data.project_background = data['project_background']
+        if 'business_summary' in data:
+            logger.info(f"更新业务摘要: {len(review_data.business_summary)} -> {len(data['business_summary'])} 字符")
+            review_data.business_summary = data['business_summary']
+        if 'interface_list' in data:
+            logger.info(f"更新接口列表: {len(review_data.interface_list)} -> {len(data['interface_list'])} 个接口")
+            review_data.interface_list = data['interface_list']
+        if merged_flow_chart is not None:
+            logger.info(f"更新流程图分析: {len(review_data.flow_chart_analysis)} -> {len(merged_flow_chart)} 个")
+            review_data.flow_chart_analysis = merged_flow_chart
+        review_data.status = new_status
+        review_data.updated_at = datetime.now().isoformat()
+        logger.info(f"审核操作: {'批准 (approve)' if action == 'approve' else '拒绝 (reject)'}")
+
+        # 更新数据库（精确字段更新，其他字段保持原样）
         logger.info("更新数据库中的审核记录...")
         try:
             review_mapper = ReviewRecordMapper()
-            db_record = review_mapper.update_status(
+            db_record = review_mapper.update_fields(
                 doc_id=doc_id,
+                document_title=data.get('document_title'),
+                project_background=data.get('project_background') if 'project_background' in data else None,
+                business_summary=data.get('business_summary') if 'business_summary' in data else None,
+                interface_list=data.get('interface_list') if 'interface_list' in data else None,
+                flow_chart_analysis=merged_flow_chart,
                 status=review_data.status,
                 reviewer=reviewer,
-                review_comment=review_comment
+                review_comment=review_comment,
             )
             if db_record:
-                logger.info(f"数据库审核状态已更新，ID: {db_record.get('id')}")
+                logger.info(f"数据库审核记录已更新，ID: {db_record.get('id')}")
             else:
                 logger.warning(f"未找到数据库记录，doc_id: {doc_id}")
         except Exception as db_err:
             logger.warning(f"更新数据库审核记录失败: {db_err}")
+
+        # 同步内存缓存
+        _review_data_store[doc_id] = review_data
 
         logger.info(f"审核已提交，doc_id: {doc_id}, action: {action}, 新状态: {review_data.status}")
         logger.info("【审核接口】提交审核完成")
@@ -3541,12 +3721,12 @@ def generate_with_review(doc_id: str):
                         rag._generate_answer(
                             prompt=interface_prompt,
                             temperature=0.2,
-                            max_tokens=8000,
+                            max_tokens=16000,  # qwen-plus 32K 输出上限
                         )
                     )
 
                     # 判断返回是否完整（接近最大token数）
-                    is_truncated = len(answer) >= 7500  # 接近8000 tokens的字符数
+                    is_truncated = len(answer) >= 15000  # 接近16000 tokens的字符数
                     truncation_info = "【警告：返回可能被截断】" if is_truncated else ""
                     logger.info(f"【大模型返回】输出长度: {len(answer)} 字符 {truncation_info}")
                     logger.info(f"【大模型返回】返回内容前500字符:\n{answer[:500]}")

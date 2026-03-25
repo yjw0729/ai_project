@@ -518,7 +518,7 @@ class APIDocumentProcessor:
             # 按子章节分割
             current_pos = 0
             for i, header in enumerate(subsection_headers):
-                header_pattern = f"#{{1,3}}\s+{re.escape(header)}"
+                header_pattern = r"(?:#){1,3}\s+" + re.escape(header)
                 match = re.search(header_pattern, content[current_pos:])
                 
                 if match:

@@ -39,11 +39,18 @@ class KnowledgeBase:
                 chunk_overlap=self.rag_config.chunk_overlap
             )
         )
-        self.vector_indexer = VectorIndexer(self.config_manager)
+        # VectorIndexer 初始化（含向量存储）可能因 ChromaDB 损坏而失败，捕获并降级
+        try:
+            self.vector_indexer = VectorIndexer(self.config_manager)
+        except Exception as vi_err:
+            logger.warning(f"VectorIndexer 初始化失败，已降级为无向量存储模式: {vi_err}")
+            self.vector_indexer = None
 
         # 缓存和状态
         self.collections = {}  # 集合名称 -> 统计信息
-        self._load_collections()
+        # _load_collections 也依赖 vector_indexer，也需要保护
+        if self.vector_indexer is not None:
+            self._load_collections()
 
         logger.info("知识库管理器初始化完成")
 
@@ -309,15 +316,18 @@ class KnowledgeBase:
 
         if collection_name in self.collections:
             return self.collections[collection_name]
-        else:
+        elif self.vector_indexer is not None:
             return self.vector_indexer.get_collection_stats(collection_name)
+        else:
+            return {"error": "向量存储不可用"}
 
     def delete_collection(self, collection_name: str = None):
         """删除集合"""
         collection_name = collection_name or self.vector_db_config.collection_name
 
         try:
-            self.vector_indexer.delete_collection(collection_name)
+            if self.vector_indexer is not None:
+                self.vector_indexer.delete_collection(collection_name)
 
             if collection_name in self.collections:
                 del self.collections[collection_name]
