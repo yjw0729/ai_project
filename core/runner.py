@@ -60,6 +60,8 @@ class RunConfig:
         priority: 优先级过滤（"P0", "P1", "P2", "P3"）
         allure_results_dir: Allure 结果目录路径
         allure_report_dir: Allure 报告目录路径
+        enable_allure: 是否启用 Allure 报告（默认 False，临时跳过）
+        enable_json_report: 是否启用 JSON 报告（默认 False，临时跳过）
         verbose: 是否显示详细输出
         capture: 日志捕获模式（"sys", "no", "fd", "tee-sys"）
         timeout: 单个测试超时时间（秒）
@@ -75,6 +77,8 @@ class RunConfig:
     priority: Optional[str] = None
     allure_results_dir: str = "./allure-results"
     allure_report_dir: str = "./allure-report"
+    enable_allure: bool = False
+    enable_json_report: bool = False
     verbose: bool = True
     capture: str = "sys"
     timeout: Optional[int] = None
@@ -123,6 +127,7 @@ class TestResult:
     error: int = 0
     duration_seconds: float = 0.0
     collected_items: int = 0
+    test_file: Optional[str] = None  # 生成的测试文件路径
     allure_results_dir: Optional[str] = None
     allure_report_dir: Optional[str] = None
     raw_output: str = ""
@@ -233,6 +238,9 @@ class TestRunner:
         # 记录执行开始时间
         start_time = datetime.now()
 
+        # 保存测试文件路径（从 test_paths 获取）
+        test_file = run_config.test_paths[0] if run_config.test_paths else None
+
         try:
             # 执行 pytest
             exit_code = pytest.main(pytest_args)
@@ -246,10 +254,11 @@ class TestRunner:
                 errors=[str(e)],
                 config=run_config,
                 start_time=start_time,
+                test_file=test_file,
             )
 
         # 解析执行结果
-        result = self._parse_result(exit_code, run_config, start_time)
+        result = self._parse_result(exit_code, run_config, start_time, test_file)
 
         logger.info("【TestRunner】执行完成: %s", result)
         return result
@@ -305,6 +314,9 @@ class TestRunner:
         """
         args: List[str] = []
 
+        # 覆盖 pytest.ini 的 addopts，避免配置冲突
+        args.extend(["-o", "addopts="])
+
         # 测试路径
         if config.test_paths:
             args.extend(config.test_paths)
@@ -326,15 +338,16 @@ class TestRunner:
         if config.priority:
             args.extend(["-m", config.priority])
 
-        # Allure 配置
-        args.extend(["--alluredir", config.allure_results_dir])
+        # Allure 配置（仅在启用时添加）
+        if config.enable_allure:
+            args.extend(["--alluredir", config.allure_results_dir])
+            # 清理之前的结果
+            args.append("--clean-alluredir")
 
-        # 清理之前的结果
-        args.append("--clean-alluredir")
-
-        # JSON 报告配置（用于提取真实统计信息）
-        json_report_path = self._get_json_report_path(config)
-        args.extend(["--json-report", "--json-report-file", json_report_path])
+        # JSON 报告配置（仅在启用时添加，用于提取真实统计信息）
+        if config.enable_json_report:
+            json_report_path = self._get_json_report_path(config)
+            args.extend(["--json-report", "--json-report-file", json_report_path])
 
         # 详细输出
         if config.verbose:
@@ -366,12 +379,11 @@ class TestRunner:
         exit_code: int,
         config: RunConfig,
         start_time: datetime,
+        test_file: Optional[str] = None,
     ) -> TestResult:
         """解析测试执行结果"""
-        # 计算执行时间
         duration = (datetime.now() - start_time).total_seconds()
 
-        # 从退出码判断状态
         if exit_code == 0:
             status = TestStatus.PASSED
         elif exit_code == 5:
@@ -379,16 +391,16 @@ class TestRunner:
         else:
             status = TestStatus.FAILED
 
-        # 从 JSON 报告中提取真实统计信息
-        json_report_path = self._get_json_report_path(config)
-        passed, failed, skipped, error, json_duration = self._parse_json_report(json_report_path)
-        total = passed + failed + skipped + error
-        if total == 0:
-            total = passed  # 如果都是 0，可能全部通过
+        passed, failed, skipped, error = 0, 0, 0, 0
+        json_duration = 0.0
 
-        # 如果 JSON 报告中没有 duration，使用 Python 计时
-        if json_duration > 0:
-            duration = json_duration
+        if config.enable_json_report:
+            json_report_path = self._get_json_report_path(config)
+            passed, failed, skipped, error, json_duration = self._parse_json_report(json_report_path)
+            if json_duration > 0:
+                duration = json_duration
+
+        total = passed + failed + skipped + error
 
         return TestResult(
             exit_code=exit_code,
@@ -400,8 +412,9 @@ class TestRunner:
             error=error,
             duration_seconds=duration,
             collected_items=total,
-            allure_results_dir=config.allure_results_dir,
-            allure_report_dir=config.allure_report_dir,
+            test_file=test_file,
+            allure_results_dir=config.allure_results_dir if config.enable_allure else None,
+            allure_report_dir=config.allure_report_dir if config.enable_allure else None,
             raw_output=self._collected_output,
         )
 
@@ -453,6 +466,7 @@ class TestRunner:
         errors: List[str],
         config: RunConfig,
         start_time: datetime,
+        test_file: Optional[str] = None,
     ) -> TestResult:
         """构建测试结果对象"""
         duration = (datetime.now() - start_time).total_seconds()
@@ -461,6 +475,7 @@ class TestRunner:
             exit_code=exit_code,
             status=status,
             duration_seconds=duration,
+            test_file=test_file,
             allure_results_dir=config.allure_results_dir,
             allure_report_dir=config.allure_report_dir,
             errors=errors,
@@ -500,6 +515,7 @@ class TestRunner:
                 capture_output=True,
                 text=True,
                 check=True,
+                shell=True,  # 使用 shell=True 以便找到 PATH 中的命令
             )
             logger.info("【TestRunner】Allure 报告生成成功: %s", report_dir)
             return report_dir

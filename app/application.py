@@ -41,6 +41,7 @@ try:
     from api.http_api_interface_xmind import api_interface_xmind_bp
     from api.http_api_auto_test import api_auto_test_bp
     from api.http_ai_enhanced_generate_cases import enhanced_generate_opt
+    from api.http_test_case_import import test_case_import_opt
     from app.routes import assertions_bp, data_factory_bp, tasks_bp
 except Exception as e:
     print('异常信息' + str(e))
@@ -281,6 +282,13 @@ app.register_blueprint(page_test_case_bp, url_prefix="/page_test_case")
 app.register_blueprint(api_interface_xmind_bp, url_prefix="/api_interface_xmind")
 app.register_blueprint(api_auto_test_bp, url_prefix="/api/auto_test")
 app.register_blueprint(enhanced_generate_opt, url_prefix="/ai_service")
+# 与 http_test_execution 的 /data_service/testcase/* 同前缀，避免网关/前端只代理 /data_service 时落到 SPA 返回 HTML
+app.register_blueprint(
+    test_case_import_opt, url_prefix="/data_service/testcase", name="test_case_import_ds"
+)
+app.register_blueprint(
+    test_case_import_opt, url_prefix="/testcase", name="test_case_import_legacy"
+)
 app.register_blueprint(assertions_bp)
 app.register_blueprint(data_factory_bp)
 app.register_blueprint(tasks_bp)
@@ -312,7 +320,7 @@ init_system_status()
 
 
 if __name__ == '__main__':
-    app.debug = True
+    app.debug = False
     host = "127.0.0.1"
     print(f"服务启动成功，访问地址: http://{host}:{app_port}")
     app.run(host=host, port=app_port)

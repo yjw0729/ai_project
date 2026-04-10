@@ -99,6 +99,7 @@ class TestCase(Base):
         comment='最近一次执行状态: not_run-未执行, success-成功, failed-失败'
     )
     last_execution_time = Column(DateTime, comment='最近一次执行时间')
+    last_execution_result = Column(JSON, comment='最近一次执行的详细结果(JSON)')
 
     version = Column(Integer, default=1, comment='版本号')
 

@@ -20,7 +20,7 @@ def send_email():
     smtp_port = 465
     sender_email = "yjw2304771795@163.com"
     sender_password = "MDwy2vDGnXCGQfbK"
-    receiver_email = "2304771795@qq.com"
+    receiver_email = "2304771795@qq1.com"
 
     msg = MIMEMultipart()
     msg['From'] = sender_email

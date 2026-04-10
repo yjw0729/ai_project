@@ -33,9 +33,29 @@ class TestCaseMapper:
     def get_by_id(self, id):
         """根据ID获取测试案例"""
         with self.session_scope() as session:
-            return session.query(self.entity_class).filter(
+            entity = session.query(self.entity_class).filter(
                 self.entity_class.id == id
             ).first()
+            if entity:
+                # 预先访问所有在 TestCaseExecutor._build_execution_data 中可能用到的属性，
+                # 避免 expunge 后访问 lazy-load 字段触发 DetachedInstanceError
+                _ = entity.case_id
+                _ = entity.name
+                _ = entity.module
+                _ = entity.priority
+                _ = entity.api_config_id
+                _ = entity.expected_results
+                _ = entity.test_data
+                _ = entity.timeout
+                _ = entity.max_retry_times
+                _ = entity.tags
+                _ = entity.case_status
+                _ = entity.description
+                _ = entity.test_steps
+                _ = entity.status
+                _ = entity.version
+                session.expunge(entity)
+            return entity
 
     def get_by_name_and_module(self, name, module):
         """根据名称和模块获取测试案例"""
@@ -599,6 +619,237 @@ class TestCaseMapper:
             'imported_count': imported_count,
             'total_count': len(data),
             'errors': errors
+        }
+
+    def import_cases_from_csv(self, csv_file_path: str, creator: str) -> dict:
+        """从CSV文件批量导入测试案例
+
+        CSV列（中文表头）映射关系：
+            用例名称      -> name
+            所属模块       -> module (必填)
+            所属系统       -> system
+            优先级        -> priority (P0/P1/P2/P3，默认 P2)
+            案例描述       -> description
+            前置条件       -> preconditions
+            测试步骤       -> test_steps (JSON数组字符串)
+            期望结果       -> expected_results (JSON对象/数组字符串)
+            测试数据       -> test_data (JSON对象字符串)
+            标签          -> tags (逗号/分号分隔的字符串，转为JSON数组)
+            最大重试次数   -> max_retry_times (整数，默认 0)
+            超时时间(秒)   -> timeout (整数)
+            状态          -> status (draft/active/inactive/deprecated，默认 draft)
+            创建人        -> creator (必填)
+
+        Returns:
+            dict: {
+                'success_count': int,   # 成功导入数量
+                'fail_count': int,      # 失败数量
+                'total_count': int,      # 总行数（不含表头）
+                'errors': [              # 每行错误信息
+                    {'row': int, 'name': str, 'error': str},
+                    ...
+                ],
+                'created_ids': [int],    # 新创建的用例ID列表
+                'updated_ids': [int],    # 更新的用例ID列表
+            }
+        """
+        import csv
+        from common.db_enitiy.test_case import TestCase as TCEntity
+
+        # 尝试多种编码读取CSV文件（常见中文Windows编码优先级）
+        encodings_to_try = ['utf-8-sig', 'utf-8', 'gbk', 'gb2312', 'gb18030']
+        file_content = None
+        detected_encoding = None
+
+        for enc in encodings_to_try:
+            try:
+                with open(csv_file_path, 'r', encoding=enc) as f:
+                    file_content = f.read()
+                    detected_encoding = enc
+                    break
+            except (UnicodeDecodeError, LookupError):
+                continue
+
+        if file_content is None:
+            raise ValueError(
+                f"无法识别CSV文件编码，已尝试: {', '.join(encodings_to_try)}。"
+                "请将文件保存为UTF-8编码后重试。"
+            )
+
+        import io
+        f = io.StringIO(file_content)
+
+        success_count = 0
+        fail_count = 0
+        errors = []
+        created_ids = []
+        updated_ids = []
+
+        reader = csv.DictReader(f)
+
+        # 验证表头（仅"测试步骤"为必填列）
+        required_fields = {'测试步骤'}
+        missing_headers = required_fields - set(reader.fieldnames or [])
+        if missing_headers:
+            raise ValueError(f"CSV缺少必需列: {','.join(missing_headers)}")
+
+        for row_idx, row in enumerate(reader, start=2):
+            try:
+                name = row.get('用例名称', '').strip()
+                module = row.get('所属模块', '').strip()
+
+                # 用例名称和所属模块变为可选，但建议填写
+                # 创建人从请求参数中获取，允许为空（可后续处理）
+                creator_val = row.get('创建人', creator).strip() or creator
+
+                # 为空字段提供默认值，避免数据库约束报错
+                if not name:
+                    name = f"未命名用例_{row_idx}"
+                if not module:
+                    module = "默认模块"
+
+                # 解析测试步骤（仅此字段必填）
+                test_steps_raw = row.get('测试步骤', '').strip()
+                try:
+                    test_steps = json.loads(test_steps_raw) if test_steps_raw else []
+                except json.JSONDecodeError:
+                    errors.append({'row': row_idx, 'name': name or '', 'error': f"测试步骤JSON格式错误: {test_steps_raw[:80]}"})
+                    fail_count += 1
+                    continue
+
+                expected_results_raw = row.get('期望结果', '').strip()
+                expected_results = None
+                if expected_results_raw:
+                    try:
+                        expected_results = json.loads(expected_results_raw)
+                    except json.JSONDecodeError:
+                        expected_results = expected_results_raw
+
+                test_data_raw = row.get('测试数据', '').strip()
+                test_data = None
+                if test_data_raw:
+                    try:
+                        test_data = json.loads(test_data_raw)
+                    except json.JSONDecodeError:
+                        test_data = test_data_raw
+
+                # 解析标签：逗号或分号分隔
+                tags_raw = row.get('标签', '').strip()
+                tags = None
+                if tags_raw:
+                    separators = [',', ';', '，', '；']
+                    for sep in separators:
+                        if sep in tags_raw:
+                            tags = [t.strip() for t in tags_raw.split(sep) if t.strip()]
+                            break
+                    if tags is None:
+                        tags = [tags_raw]
+
+                # 解析优先级
+                priority_map = {'p0': 'P0', 'p1': 'P1', 'p2': 'P2', 'p3': 'P3'}
+                priority_raw = row.get('优先级', 'P2').strip().lower()
+                priority = priority_map.get(priority_raw, 'P2')
+
+                # 解析状态
+                status_map = {'draft': 'draft', 'active': 'active', 'inactive': 'inactive', 'deprecated': 'deprecated'}
+                status_raw = row.get('状态', 'draft').strip().lower()
+                status = status_map.get(status_raw, 'draft')
+
+                # 解析数字字段
+                max_retry_raw = row.get('最大重试次数', '0').strip()
+                try:
+                    max_retry_times = int(max_retry_raw) if max_retry_raw else 0
+                except ValueError:
+                    max_retry_times = 0
+
+                timeout_raw = row.get('超时时间(秒)', '').strip()
+                try:
+                    timeout = int(timeout_raw) if timeout_raw else None
+                except ValueError:
+                    timeout = None
+
+                # 解析接口ID（关联 api_config 表）
+                api_config_id = None
+                api_config_id_raw = row.get('接口ID', '').strip()
+                if api_config_id_raw:
+                    try:
+                        api_config_id = int(api_config_id_raw)
+                    except ValueError:
+                        pass  # 非数字则忽略
+
+                # 检查是否已存在（按 name + module 去重）
+                with self.session_scope() as session:
+                    existing = session.query(self.entity_class).filter(
+                        self.entity_class.name == name,
+                        self.entity_class.module == module
+                    ).first()
+
+                    if existing:
+                        # 更新已有记录
+                        update_fields = {
+                            'description': row.get('案例描述', '').strip() or existing.description,
+                            'system': row.get('所属系统', '').strip() or existing.system,
+                            'priority': priority,
+                            'preconditions': row.get('前置条件', '').strip() or existing.preconditions,
+                            'test_steps': test_steps,
+                            'expected_results': expected_results,
+                            'test_data': test_data,
+                            'tags': tags,
+                            'max_retry_times': max_retry_times,
+                            'timeout': timeout,
+                            'status': status,
+                            'version': existing.version + 1,
+                        }
+                        # 接口ID：CSV中有值时更新，否则保持原值
+                        if api_config_id is not None:
+                            update_fields['api_config_id'] = api_config_id
+                        for key, val in update_fields.items():
+                            if hasattr(existing, key):
+                                setattr(existing, key, val)
+                        session.flush()
+                        updated_ids.append(existing.id)
+                    else:
+                        # 创建新记录
+                        entity = TCEntity(
+                            name=name,
+                            module=module,
+                            system=row.get('所属系统', '').strip() or None,
+                            api_config_id=api_config_id,
+                            priority=priority,
+                            description=row.get('案例描述', '').strip() or None,
+                            preconditions=row.get('前置条件', '').strip() or None,
+                            test_steps=test_steps,
+                            expected_results=expected_results,
+                            test_data=test_data,
+                            tags=tags,
+                            max_retry_times=max_retry_times,
+                            timeout=timeout,
+                            status=status,
+                            creator=creator_val,
+                            review_status='pending',
+                            version=1,
+                        )
+                        session.add(entity)
+                        session.flush()
+                        # 自动生成全局业务用例编号
+                        biz_case_id = f"TEST_CASE_{entity.id:09d}"
+                        entity.case_id = biz_case_id
+                        session.flush()
+                        created_ids.append(entity.id)
+
+                success_count += 1
+
+            except Exception as e:
+                errors.append({'row': row_idx, 'name': row.get('用例名称', ''), 'error': str(e)})
+                fail_count += 1
+
+        return {
+            'success_count': success_count,
+            'fail_count': fail_count,
+            'total_count': success_count + fail_count,
+            'errors': errors,
+            'created_ids': created_ids,
+            'updated_ids': updated_ids,
         }
 
     # 复制和模板方法

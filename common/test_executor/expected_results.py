@@ -55,6 +55,8 @@ class ExpectedResultsParser:
         "regex", "json_path", "response_time", "schema", "header",
         "type", "length", "greater_than", "less_than",
         "in_list", "not_in_list", "not_empty",
+        # 数据库断言类型
+        "db_check",
     }
 
     def parse(self, expected_results: Any) -> List[Dict[str, Any]]:

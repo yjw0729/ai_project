@@ -5,6 +5,9 @@ from contextlib import contextmanager
 from common.datacase_function.contect_db import db_session
 import json
 import re
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 class GlobalVariableMapper:
@@ -191,21 +194,28 @@ class GlobalVariableMapper:
 
         # 1. 全局变量（最低优先级）
         global_vars = self.get_global_variables()
+        logger.info("【GlobalVariableMapper】加载全局变量: %d 个, 列表=%s",
+                    len(global_vars), [(v.name, v.value) for v in global_vars])
         for var in global_vars:
             variables[var.name] = var.get_typed_value()
 
         # 2. 环境变量（中优先级）
         if environment_id:
             env_vars = self.get_environment_variables(environment_id)
+            logger.info("【GlobalVariableMapper】加载环境变量(env_id=%s): %d 个, 列表=%s",
+                        environment_id, len(env_vars), [(v.name, v.value) for v in env_vars])
             for var in env_vars:
                 variables[var.name] = var.get_typed_value()
 
         # 3. 模块变量（最高优先级）
         if module_id:
             module_vars = self.get_module_variables(module_id)
+            logger.info("【GlobalVariableMapper】加载模块变量(module_id=%s): %d 个, 列表=%s",
+                        module_id, len(module_vars), [(v.name, v.value) for v in module_vars])
             for var in module_vars:
                 variables[var.name] = var.get_typed_value()
 
+        logger.info("【GlobalVariableMapper】合并后变量字典: %s", variables)
         return variables
 
     def get_variable_stats(self):

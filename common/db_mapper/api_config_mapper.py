@@ -33,6 +33,23 @@ class ApiConfigMapper:
         with self.session_scope() as session:
             obj = session.query(self.entity_class).filter(self.entity_class.id == id).first()
             if obj:
+                # 预先访问所有可能用到的属性，避免 expunge 后访问 lazy-load 字段触发 DetachedInstanceError
+                _ = obj.id
+                _ = obj.name
+                _ = obj.module
+                _ = obj.api_path
+                _ = obj.method
+                _ = obj.description
+                _ = obj.request_type
+                _ = obj.headers
+                _ = obj.default_params
+                _ = obj.request_body_template
+                _ = obj.is_encryption
+                _ = obj.encryption_config
+                _ = obj.expected_response
+                _ = obj.timeout
+                _ = obj.retry_times
+                _ = obj.is_deprecated
                 session.expunge(obj)
             return obj
 
