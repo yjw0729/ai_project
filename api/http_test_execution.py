@@ -421,11 +421,19 @@ def _parse_pytest_results(
     """
     results = []
 
+    if not os.path.exists(result_file):
+        logger.warning("【pytest结果】结果文件不存在: %s", result_file)
+        return results
+
     try:
         with open(result_file, encoding="utf-8") as f:
             test_results = json.load(f)
     except Exception as e:
         logger.warning("【pytest结果】读取失败 %s: %s", result_file, e)
+        return results
+
+    if not test_results:
+        logger.warning("【pytest结果】结果文件为空: %s", result_file)
         return results
 
     logger.info("【pytest结果】文件=%s, 找到 %d 个用例结果: %s", result_file, len(test_results), list(test_results.keys()))
@@ -435,6 +443,7 @@ def _parse_pytest_results(
         import re
         return re.sub(r"[^a-zA-Z0-9_]", "_", str(case_id))[:50]
 
+    matched_count = 0
     for idx, case in enumerate(execution_cases):
         # 函数名格式: test_{idx+1}_{_safe_name(case_id)}（与生成代码一致）
         func_name = f"test_{idx + 1}_{_safe_name(case.case_id)}"
@@ -442,12 +451,13 @@ def _parse_pytest_results(
 
         matched = False
         for key, value in test_results.items():
-            # key 可能是: test_1_xxx 或 test_xxx.py::test_1_xxx
+            # 标准化 key：去掉 .py 前缀、::分隔符后的部分
             pure_name = key.split("::")[-1] if "::" in key else key
-            # 去掉 .py 后缀
-            pure_name = pure_name.rsplit(".py", 1)[-1].lstrip(".")
+            # 去掉 .py 后缀（可能有多层后缀）
+            pure_name = pure_name.replace(".py", "")
 
-            if func_name == pure_name or func_name in pure_name or pure_name in func_name:
+            # 精确匹配或包含匹配
+            if func_name == pure_name or func_name == key:
                 logger.info("【pytest结果】匹配成功: %s -> %s", func_name, key)
                 results.append({
                     "case_id": case.db_id,
@@ -456,6 +466,19 @@ def _parse_pytest_results(
                     "message": value.get("message", ""),
                 })
                 matched = True
+                matched_count += 1
+                break
+            # 部分匹配（key 中包含 func_name 或 func_name 包含 key 的核心部分）
+            elif pure_name in func_name or func_name in pure_name:
+                logger.info("【pytest结果】模糊匹配: %s -> %s", func_name, key)
+                results.append({
+                    "case_id": case.db_id,
+                    "case_name": case.name,
+                    "status": value.get("status", "failed"),
+                    "message": value.get("message", ""),
+                })
+                matched = True
+                matched_count += 1
                 break
 
         if not matched:
@@ -467,6 +490,7 @@ def _parse_pytest_results(
                 "message": "未在结果文件中找到对应用例",
             })
 
+    logger.info("【pytest结果】匹配完成: 成功 %d/%d 个", matched_count, len(execution_cases))
     return results
 
 
