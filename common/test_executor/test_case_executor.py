@@ -61,6 +61,17 @@ class TestCaseExecutionData:
     preconditions: str = ""                        # 原始 preconditions JSON 字符串
     case_variables: Dict[str, Any] = field(default_factory=dict)  # 从 preconditions 解析出的变量字典
 
+    # 响应字段提取配置（从接口响应中提取字段，供后续用例引用）
+    extract_fields: List[Dict[str, Any]] = field(default_factory=list)
+    # extract_fields 格式：
+    # [
+    #     {
+    #         "name": "变量名",           # 提取后的变量名，用于后续用例引用
+    #         "path": "$.data.orderId",   # JSONPath 路径
+    #         "description": "订单ID"     # 描述（可选）
+    #     }
+    # ]
+
     def to_dict(self) -> Dict[str, Any]:
         return {
             "case_id": self.case_id,
@@ -83,6 +94,7 @@ class TestCaseExecutionData:
             "description": self.description,
             "preconditions": self.preconditions,
             "case_variables": self.case_variables,
+            "extract_fields": self.extract_fields,
         }
 
 
@@ -185,6 +197,14 @@ class TestCaseExecutor:
         # 解析数据库断言配置（post_script 和 db_checks）
         post_script, db_checks = self._parse_db_checks(case.expected_results)
 
+        # 解析响应字段提取配置（优先从 expected_results 解析，否则 fallback 到 extract_fields 列）
+        extract_fields = self._parse_extract_fields(case.expected_results)
+        if not extract_fields:
+            extract_fields = getattr(case, 'extract_fields', []) or []
+            if extract_fields:
+                logger.info("【_build_execution_data】从 extract_fields 列读取到 %d 个提取配置: %s",
+                           len(extract_fields), [f.get('name') for f in extract_fields])
+
         # 请求参数（优先用 test_data；若为空则 fallback 到 test_steps）
         headers = self._merge_headers(env_config, api_cfg)
         query_params, request_body = self._parse_request_params(case.test_data, api_cfg, getattr(case, "test_steps", None))
@@ -223,6 +243,7 @@ class TestCaseExecutor:
             description=case.description or "",
             preconditions=preconditions_str,
             case_variables=case_variables,
+            extract_fields=extract_fields,
         )
 
     def _parse_assertions(self, expected_results) -> List[Dict[str, Any]]:
@@ -293,6 +314,75 @@ class TestCaseExecutor:
     def _parse_db_checks(self, expected_results) -> tuple:
         """解析数据库断言配置（post_script 和 db_checks）"""
         return self.db_check_parser.parse(expected_results)
+
+    def _parse_extract_fields(self, expected_results) -> List[Dict[str, Any]]:
+        """
+        解析响应字段提取配置。
+
+        支持以下两种配置格式：
+
+        格式一（独立顶层字段）：
+        {
+            "extract_fields": [
+                {"name": "orderId", "path": "$.data.orderId", "description": "订单ID"},
+                {"name": "userId", "path": "$.data.userId"}
+            ]
+        }
+
+        格式二（嵌套在 extract 下）：
+        {
+            "extract": [
+                {"name": "orderId", "path": "$.data.orderId"},
+                {"name": "userId", "path": "$.data.userId"}
+            ]
+        }
+
+        Returns:
+            List[Dict[str, Any]]: 提取配置列表
+        """
+        if not expected_results:
+            return []
+
+        if isinstance(expected_results, str):
+            try:
+                expected_results = json.loads(expected_results)
+            except json.JSONDecodeError:
+                logger.warning("【_parse_extract_fields】expected_results JSON 解析失败")
+                return []
+
+        if not isinstance(expected_results, dict):
+            return []
+
+        # 格式一：直接取 extract_fields
+        extract_list = expected_results.get("extract_fields", [])
+
+        # 格式二：取 extract 字段
+        if not extract_list:
+            extract_list = expected_results.get("extract", [])
+
+        if not isinstance(extract_list, list):
+            logger.warning("【_parse_extract_fields】extract_fields/extract 必须是数组")
+            return []
+
+        result = []
+        for item in extract_list:
+            if not isinstance(item, dict):
+                continue
+            name = item.get("name")
+            path = item.get("path")
+            if not name or not path:
+                logger.warning("【_parse_extract_fields】缺少 name 或 path: %s", item)
+                continue
+            result.append({
+                "name": name,
+                "path": path,
+                "description": item.get("description", ""),
+            })
+
+        if result:
+            logger.info("【_parse_extract_fields】解析出 %d 个提取配置: %s",
+                       len(result), [r["name"] for r in result])
+        return result
 
     def _merge_headers(self, env_config, api_cfg) -> Dict[str, str]:
         """

@@ -45,6 +45,7 @@ class TestCaseMapper:
                 _ = entity.priority
                 _ = entity.api_config_id
                 _ = entity.expected_results
+                _ = entity.extract_fields
                 _ = entity.test_data
                 _ = entity.timeout
                 _ = entity.max_retry_times

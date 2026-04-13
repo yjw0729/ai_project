@@ -85,6 +85,7 @@ class RunConfig:
     fail_fast: bool = False
     continue_on_collection_errors: bool = False
     extra_args: List[str] = field(default_factory=list)
+    no_conftest: bool = False  # 允许加载项目根目录 conftest.py（设置 sys.path 使 common 包可导入）
 
     def __post_init__(self):
         """验证配置参数"""
@@ -233,7 +234,9 @@ class TestRunner:
         # 构建 pytest 参数
         pytest_args = self._build_pytest_args(run_config)
 
-        logger.info("【TestRunner】开始执行测试，参数: %s", pytest_args)
+        # 构建 pytest 命令行
+        pytest_cmd = [sys.executable, "-m", "pytest"] + pytest_args
+        logger.info("【TestRunner】执行命令: %s", " ".join(pytest_cmd))
 
         # 记录执行开始时间
         start_time = datetime.now()
@@ -242,10 +245,27 @@ class TestRunner:
         test_file = run_config.test_paths[0] if run_config.test_paths else None
 
         try:
-            # 执行 pytest
-            exit_code = pytest.main(pytest_args)
-        except SystemExit as e:
-            exit_code = e.code
+            # 使用 subprocess 运行 pytest，完全隔离进程
+            # 重要：cwd 必须设置为项目根目录，确保生成测试文件中的 sys.path 设置能找到 common 包
+            # 路径层级：outputs/generated_tests/test_xxx.py -> outputs -> 项目根
+            _project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(test_file)))) if test_file else os.getcwd()
+            _subproc_env = os.environ.copy()
+            _subproc_env["PYTHONIOENCODING"] = "utf-8"
+            _subproc_env["PYTHONUTF8"] = "1"
+            proc = subprocess.Popen(
+                pytest_cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                cwd=_project_root,
+                env=_subproc_env,
+            )
+            _proc_output_lines = []
+            for _line in iter(proc.stdout.readline, b""):
+                _decoded = _line.decode("utf-8", errors="replace")
+                _proc_output_lines.append(_decoded)
+                print(_decoded, end="")  # 实时输出到父进程 stdout
+            proc.stdout.close()
+            exit_code = proc.wait()
         except Exception as e:
             logger.error("【TestRunner】执行异常: %s", str(e))
             return self._build_result(
@@ -256,6 +276,16 @@ class TestRunner:
                 start_time=start_time,
                 test_file=test_file,
             )
+
+        # 将子进程输出记录到日志
+        _full_output = "".join(_proc_output_lines)
+        # 完整输出不做截断，但分块记录避免日志单行过长
+        _max_chars = 50000
+        if len(_full_output) > _max_chars:
+            logger.info("【TestRunner】pytest 完整输出(共 %d 字符，截取前 %d 字符):\n%s", len(_full_output), _max_chars, _full_output[:_max_chars])
+            logger.info("【TestRunner】pytest 输出截断: 完整输出共 %d 字符，超出 %d 字符限制", len(_full_output), _max_chars)
+        else:
+            logger.info("【TestRunner】pytest 完整输出(共 %d 字符):\n%s", len(_full_output), _full_output)
 
         # 解析执行结果
         result = self._parse_result(exit_code, run_config, start_time, test_file)
@@ -314,9 +344,6 @@ class TestRunner:
         """
         args: List[str] = []
 
-        # 覆盖 pytest.ini 的 addopts，避免配置冲突
-        args.extend(["-o", "addopts="])
-
         # 测试路径
         if config.test_paths:
             args.extend(config.test_paths)
@@ -371,6 +398,10 @@ class TestRunner:
         # 额外的参数
         if config.extra_args:
             args.extend(config.extra_args)
+
+        # 跳过项目根目录 conftest.py，避免 hook 被覆盖
+        if config.no_conftest:
+            args.append("--noconftest")
 
         return args
 

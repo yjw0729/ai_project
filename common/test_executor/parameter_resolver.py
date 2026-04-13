@@ -195,6 +195,21 @@ class ParameterResolver:
                     })
                     logger.debug("【参数替换】前置变量 %s -> %s", placeholder, field_value)
 
+        # 替换响应提取变量 ${RESPONSE.varName}
+        # 注意：这些变量在生成阶段无法解析（运行时才提取），保留占位符供生成代码中的运行时替换使用
+        response_pattern = re.compile(r'\$\{RESPONSE\.([^}]+)\}')
+        for match in response_pattern.finditer(value):
+            var_name = match.group(1)
+            placeholder = match.group(0)
+            # 占位符格式: ${RESPONSE.orderId} -> 保留，生成代码时替换为 _get_session_context().get("orderId")
+            self._replaced_vars.append({
+                "placeholder": placeholder,
+                "var_name": var_name,
+                "value": f"${{RESPONSE.{var_name}}}",  # 保留占位符，运行时替换
+                "source": "response_extract"
+            })
+            logger.debug("【参数替换】响应提取变量 %s (将在运行时解析)", placeholder)
+
         # 替换特殊变量（使用缓存值，同一替换中相同占位符生成相同值）
         value = value.replace("${RANDOM}", _random_cache)
         value = value.replace("${TIMESTAMP}", _timestamp_cache)

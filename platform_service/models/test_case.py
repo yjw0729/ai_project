@@ -67,6 +67,7 @@ class TestCase(Base):
     setup_scripts = Column(JSON, comment='前置脚本')
     teardown_scripts = Column(JSON, comment='后置脚本')
     expected_results = Column(JSON, comment='期望结果')
+    extract_fields = Column(JSON, comment='响应字段提取配置(JSON数组)')
     test_data = Column(JSON, comment='测试数据')
     variables = Column(JSON, comment='案例级变量')
 

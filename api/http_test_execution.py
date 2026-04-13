@@ -153,16 +153,22 @@ def list_testcases():
         for r in rows:
             session.expunge(r)
 
-    # 构造返回数据，附加 last_execution_result 字段
-    data = []
-    for r in rows:
-        item = r.to_json()
-        # 如果有详细执行结果，添加到返回字段
-        if hasattr(r, 'last_execution_result') and r.last_execution_result:
-            item['last_execution_result'] = r.last_execution_result
-        else:
-            item['last_execution_result'] = None
-        data.append(item)
+        # 构造返回数据，附加 last_execution_result 和 extract_fields 字段
+        data = []
+        for r in rows:
+            item = r.to_json()
+            # 如果有详细执行结果，添加到返回字段
+            if hasattr(r, 'last_execution_result') and r.last_execution_result:
+                item['last_execution_result'] = r.last_execution_result
+            else:
+                item['last_execution_result'] = None
+
+            # 直接从 extract_fields 字段获取（如果存在）
+            extract_fields = []
+            if hasattr(r, 'extract_fields') and r.extract_fields:
+                extract_fields = r.extract_fields if isinstance(r.extract_fields, list) else []
+            item['extract_fields'] = extract_fields
+            data.append(item)
 
     logger.info("【查询测试案例】返回数量=%s", len(data))
     return json_response({"code": 200, "msg": "查询成功", "data": data}, status=200)
@@ -283,6 +289,7 @@ def execute_testcases():
         enable_json_report=False,
         verbose=True,
         fail_fast=False,
+        no_conftest=False,  # 允许 conftest.py 加载，以便 session hooks 写入结果文件
     )
 
     try:
@@ -378,6 +385,13 @@ def _parse_allure_results(
             results = _parse_pytest_results(execution_cases, result_file, logger)
             if results:
                 logger.info("【结果解析】从 pytest 结果文件成功解析 %d 个用例结果", len(results))
+                # 解析完成后删除结果文件
+                try:
+                    if result_file and os.path.exists(result_file):
+                        os.remove(result_file)
+                        logger.info("【结果解析】已删除结果文件: %s", result_file)
+                except Exception as e:
+                    logger.warning("【结果解析】删除结果文件失败: %s", e)
                 return results
         except Exception as e:
             logger.warning("【结果解析】pytest 结果文件解析失败: %s", e)
@@ -464,6 +478,9 @@ def _parse_pytest_results(
                     "case_name": case.name,
                     "status": value.get("status", "failed"),
                     "message": value.get("message", ""),
+                    "fail_response": value.get("fail_response", ""),
+                    "success_response": value.get("success_response", ""),
+                    "extract_fields": value.get("extract_fields", {}),
                 })
                 matched = True
                 matched_count += 1
@@ -476,6 +493,9 @@ def _parse_pytest_results(
                     "case_name": case.name,
                     "status": value.get("status", "failed"),
                     "message": value.get("message", ""),
+                    "fail_response": value.get("fail_response", ""),
+                    "success_response": value.get("success_response", ""),
+                    "extract_fields": value.get("extract_fields", {}),
                 })
                 matched = True
                 matched_count += 1
@@ -672,6 +692,10 @@ def _write_back_results(
                     "case_name": result.get("case_name", ""),
                     "message": result.get("message", ""),
                     "duration_ms": result.get("duration_ms", 0),
+                    # 响应 body：失败取 fail_response，成功取 success_response（仅当配置了 extract_fields 时有值）
+                    "response_body": result.get("fail_response") or result.get("success_response") or "",
+                    # 提取字段结果
+                    "extract_fields": result.get("extract_fields") or {},
                 }
 
                 session.query(entity).filter(

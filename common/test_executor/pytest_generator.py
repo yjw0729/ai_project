@@ -142,13 +142,26 @@ class PytestGenerator:
             f"# timeout: {timeout}s",
             "# ============================================================",
             "",
+            "# ---- sys.path：确保能 import common 包 ----",
+            "import sys",
+            "import os",
+            "_PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))",
+            "if _PROJECT_ROOT not in sys.path:",
+            "    sys.path.insert(0, _PROJECT_ROOT)",
+            "_PARENT_ROOT = os.path.dirname(_PROJECT_ROOT)",
+            "if _PARENT_ROOT not in sys.path:",
+            "    sys.path.insert(0, _PARENT_ROOT)",
+            "",
             "import pytest",
             "import requests",
             "import json",
             "import time",
             "import logging",
-            "import os",
             "from typing import Any, Dict, Optional",
+            "",
+            "# ---- 响应字段提取：session 级上下文（供后续用例引用）----",
+            "from common.test_executor.response_extract import _get_session_context",
+            "from conftest import _extract_fields_by_config, _store_test_context",
             "",
             "logger = logging.getLogger(__name__)",
             "",
@@ -156,88 +169,6 @@ class PytestGenerator:
             f'BASE_URL = "{base_url}"',
             f"REQUEST_TIMEOUT = {timeout}",
             f'EXECUTION_ID = "{execution_id}"',
-            f'RESULT_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".test_results.json")',
-            "",
-            "# ---- 结果收集：捕获每个用例的详细执行结果 ----",
-            "_test_results = {}",
-            "_test_context = {}  # 存储每个用例的响应上下文",
-            "",
-            "def pytest_runtest_logreport(report):",
-            "    \"\"\"pytest hook: 每个测试用例执行完成后记录结果\"\"\"",
-            "    import sys",
-            "    if report.when == 'call':",
-            "        test_name = report.nodeid",
-            "        # 从 nodeid 提取函数名: module.py::test_func",
-            "        func_name = test_name.split('::')[-1] if '::' in test_name else test_name",
-            "        # 获取该用例的响应上下文",
-            "        context = _test_context.get(func_name, {})",
-            "        print(f'[pytest_hook] 处理用例: {func_name}, failed={report.failed}, passed={report.passed}', file=sys.stderr)",
-            "        if report.failed:",
-            "            # 收集失败信息",
-            "            longrepr = getattr(report, 'longrepr', None)",
-            "            if longrepr:",
-            "                if hasattr(longrepr, 'reprcrash'):",
-            "                    failure_msg = str(longrepr.reprcrash.message)",
-            "                else:",
-            "                    failure_msg = str(longrepr)",
-            "            else:",
-            "                failure_msg = '用例执行失败'",
-            "            # 失败时返回完整响应信息（优先使用 _store_test_context 保存的响应）",
-            "            resp_info = context.get('response', {})",
-            "            if resp_info:",
-            "                status_code = resp_info.get('status_code', 'N/A')",
-            "                resp_body = resp_info.get('body', 'N/A')",
-            "                if status_code != 'N/A' or resp_body != 'N/A':",
-            "                    failure_msg = f'[HTTP {status_code}] {failure_msg}\\n响应体: {str(resp_body)[:2000]}'",
-            "            print(f'[pytest_hook] 失败信息: {failure_msg[:200]}', file=sys.stderr)",
-            "            _test_results[func_name] = {",
-            "                'status': 'failed',",
-            "                'message': failure_msg[:2000],",
-            "            }",
-            "        elif report.passed:",
-            "            _test_results[func_name] = {",
-            "                'status': 'passed',",
-            "                'message': '',",
-            "            }",
-            "        # 处理 setup/teardown 失败的情况",
-            "        elif report.failed and report.when != 'call':",
-            "            _test_results[func_name] = {",
-            "                'status': 'failed',",
-            "                'message': f'[setup/teardown] {str(getattr(report, \"longrepr\", \"用例失败\"))}'[:2000],",
-            "            }",
-            "",
-            "def pytest_sessionfinish(session, exitstatus):",
-            "    \"\"\"pytest hook: 所有测试执行完成后写入结果文件\"\"\"",
-            "    import traceback",
-            "    import sys",
-            "    print(f'[pytest_sessionfinish] exitstatus={exitstatus}, _test_results={len(_test_results)}', file=sys.stderr)",
-            "    try:",
-            "        with open(RESULT_FILE, 'w', encoding='utf-8') as f:",
-            "            json.dump(_test_results, f, ensure_ascii=False)",
-            "        print(f'[结果] 已写入 {RESULT_FILE}, 共 {len(_test_results)} 个用例: {list(_test_results.keys())}', file=sys.stderr)",
-            "    except Exception as e:",
-            "        print(f'[结果] 写入失败: {e}\\n{traceback.format_exc()}', file=sys.stderr)",
-            "        # 尝试使用备用路径",
-            "        try:",
-            "            alt_path = os.path.join(os.getcwd(), '.test_results_backup.json')",
-            "            with open(alt_path, 'w', encoding='utf-8') as f:",
-            "                json.dump(_test_results, f, ensure_ascii=False)",
-            "            print(f'[结果] 备用写入成功: {alt_path}', file=sys.stderr)",
-            "        except Exception as e2:",
-            "            print(f'[结果] 备用写入也失败: {e2}', file=sys.stderr)",
-            "",
-            "def _store_test_context(func_name, resp):",
-            "    \"\"\"存储测试上下文（响应信息），供 pytest hook 使用\"\"\"",
-            "    try:",
-            "        body = resp.text[:5000] if resp.text else ''",
-            "    except Exception:",
-            "        body = '无法读取响应体'",
-            "    _test_context[func_name] = {",
-            "        'response': {",
-            "            'status_code': resp.status_code,",
-            "            'body': body,",
-            "        }",
-            "    }",
             "",
             "# ---- requests Session（支持 keep-alive）----",
             "_session = requests.Session()",
@@ -257,10 +188,19 @@ class PytestGenerator:
             "    if headers:",
             "        _headers.update(headers)",
             "",
-            '    logger.info("[_request] 实际发送: method=%s, url=%s, headers=%s, params=%s, body=%s",',
-            '                method.upper(), url, json.dumps(_headers, ensure_ascii=False),',
-            '                json.dumps(params, ensure_ascii=False) if params else "None",',
-            '                json.dumps(json_body, ensure_ascii=False)[:500] if json_body is not None else "None")',
+            '    _req_body_str = json.dumps(json_body, ensure_ascii=False)[:1000] if json_body is not None else "None"',
+            '    _req_params_str = json.dumps(params, ensure_ascii=False)[:500] if params else "None"',
+            '    _req_lines = [',
+            '        "\\n" + "=" * 30 + " HTTP REQUEST " + "=" * 30,',
+            '        "  [地址] " + url,',
+            '        "  [方法] " + method.upper(),',
+            '        "  [请求头] " + json.dumps(_headers, ensure_ascii=False)[:600],',
+            '        "  [Query] " + _req_params_str,',
+            '        "  [请求体] " + _req_body_str,',
+            '        "  [超时] " + str(timeout) + "s",',
+            '        "=" * 60 + "\\n",',
+            '    ]',
+            '    print("\\n".join(_req_lines))',
             "",
             "    try:",
             "        resp = _session.request(",
@@ -272,6 +212,15 @@ class PytestGenerator:
             "            data=data_body,",
             "            timeout=timeout,",
             "        )",
+            '        _resp_body_str = resp.text[:2000] if resp.text else "空响应"',
+            '        _resp_lines = [',
+            '            "\\n" + "=" * 30 + " HTTP RESPONSE " + "=" * 30,',
+            '            "  [状态码] " + str(resp.status_code),',
+            '            "  [响应头] " + json.dumps(dict(resp.headers), ensure_ascii=False)[:600],',
+            '            "  [响应体] " + _resp_body_str,',
+            '            "=" * 60 + "\\n",',
+            '        ]',
+            '        print("\\n".join(_resp_lines))',
             "        return resp",
             '    except requests.exceptions.Timeout:',
             '        raise AssertionError("请求超时 [" + method + "] " + url + ": 超过 " + str(timeout) + "s")',
@@ -281,7 +230,7 @@ class PytestGenerator:
         return "\n".join(lines)
 
     def _build_assertion_helpers(self) -> str:
-        """生成断言辅助函数"""
+        """生成断言辅助函数、pytest hooks 和上下文存储"""
         lines = [
             "",
             "def _assert_single(resp, path_str, expected, a_type, a_name):",
@@ -334,6 +283,14 @@ class PytestGenerator:
             "def api_client():",
             '    """每个测试用例的 API 客户端 fixture。"""',
             "    return _session",
+            "",
+            "@pytest.fixture(scope='session')",
+            "def response_context():",
+            '    """Session 级响应提取上下文 fixture。"""',
+            "    ctx = _get_session_context()",
+            '    logger.info("[Fixture] response_context session 开始，已提取变量: %s", list(ctx.keys()))',
+            "    yield ctx",
+            '    logger.info("[Fixture] response_context session 结束，已提取变量: %s", list(ctx.keys()))',
         ]
         return "\n".join(lines)
 
@@ -375,6 +332,7 @@ class PytestGenerator:
         # 数据库断言配置
         post_script = getattr(case, "post_script", []) or []
         db_checks = getattr(case, "db_checks", []) or []
+        extract_fields = getattr(case, "extract_fields", []) or []
         module = getattr(case, "module", "API测试")
 
         # ========== 变量替换阶段 ==========
@@ -429,9 +387,13 @@ class PytestGenerator:
         # ====== 详细日志1.1: preconditions 变量配置 ======
         if case_variables:
             variables_json = self._json_dumps(case_variables)
-            lines.extend([
-                f'    logger.info("【变量配置】从 preconditions 加载 {len(case_variables)} 个变量: %s", "{{variables_json}}")',
-            ])
+            lines.append(
+                '    logger.info("【变量配置】从 preconditions 加载 '
+                + str(len(case_variables))
+                + ' 个变量: %s", '
+                + repr(variables_json)
+                + ')'
+            )
         else:
             lines.append('    logger.info("【变量配置】无 preconditions 变量配置")')
 
@@ -447,13 +409,16 @@ class PytestGenerator:
             if headers_changed:
                 resolved_headers_json = self._json_dumps(resolved_headers)
                 lines.extend([
-                    f'    logger.info("【请求头-原始】%s", "{{raw_headers_json}}")',
-                    f'    logger.info("【请求头-变量替换后】%s", "{{resolved_headers_json}}")',
+                    '    _raw_headers_json = ' + repr(raw_headers_json),
+                    '    _resolved_headers_json = ' + repr(resolved_headers_json),
+                    '    logger.info("【请求头-原始】%s", _raw_headers_json)',
+                    '    logger.info("【请求头-变量替换后】%s", _resolved_headers_json)',
                     '    logger.info("【请求头-变量替换】已执行变量替换")',
                 ])
             else:
                 lines.extend([
-                    f'    logger.info("【请求头】%s", "{{raw_headers_json}}")',
+                    '    _raw_headers_json = ' + repr(raw_headers_json),
+                    '    logger.info("【请求头】%s", _raw_headers_json)',
                 ])
         else:
             lines.append('    logger.info("【请求头】无自定义请求头，使用默认Content-Type")')
@@ -464,13 +429,16 @@ class PytestGenerator:
             if query_changed:
                 resolved_params_json = self._json_dumps(resolved_query_params)
                 lines.extend([
-                    f'    logger.info("【Query参数-原始】%s", "{{raw_params_json}}")',
-                    f'    logger.info("【Query参数-变量替换后】%s", "{{resolved_params_json}}")',
+                    '    _raw_params_json = ' + repr(raw_params_json),
+                    '    _resolved_params_json = ' + repr(resolved_params_json),
+                    '    logger.info("【Query参数-原始】%s", _raw_params_json)',
+                    '    logger.info("【Query参数-变量替换后】%s", _resolved_params_json)',
                     '    logger.info("【Query参数-变量替换】已执行变量替换")',
                 ])
             else:
                 lines.extend([
-                    f'    logger.info("【Query参数】%s", "{{raw_params_json}}")',
+                    '    _raw_params_json = ' + repr(raw_params_json),
+                    '    logger.info("【Query参数】%s", _raw_params_json)',
                 ])
         else:
             lines.append('    logger.info("【Query参数】无Query参数")')
@@ -491,10 +459,10 @@ class PytestGenerator:
                 # 构建替换详情日志
                 if replaced_vars:
                     replaced_info = "; ".join([f"{v['placeholder']}->{v['value']}" for v in replaced_vars])
-                    lines.append(f'    logger.info("【请求体-变量替换详情】%s", "{replaced_info}")')
+                    lines.append('    logger.info("【请求体-变量替换详情】%s", ' + repr(replaced_info) + ')')
                 if auto_generated_vars:
                     auto_info = "; ".join([f"{v['placeholder']}->{v['value']}(自动生成)" for v in auto_generated_vars])
-                    lines.append(f'    logger.info("【请求体-变量缺失警告】以下变量未配置，自动生成: %s", "{auto_info}")')
+                    lines.append('    logger.info("【请求体-变量缺失警告】以下变量未配置，自动生成: %s", ' + repr(auto_info) + ')')
 
                 lines.extend([
                     f'    _raw_body = {raw_body_json}',
@@ -519,6 +487,40 @@ class PytestGenerator:
                 '    _resolved_body = None',
                 '    logger.info("【请求体】无请求体")',
             ])
+
+        # ====== ${RESPONSE.xxx} 变量替换（从 session 上下文读取前序用例的响应值）======
+        lines.extend([
+            '    logger.info("【响应变量替换】检查请求数据中的 ${RESPONSE.xxx} 占位符...")',
+            '    _session_ctx = _get_session_context()',
+            '    _resp_vars_found = []',
+            '    def _resolve_resp_vars(d):',
+            '        """递归替换字典中的 ${RESPONSE.xxx} 占位符"""',
+            '        nonlocal _resp_vars_found',
+            '        if isinstance(d, dict):',
+            '            for k, v in d.items():',
+            '                d[k] = _resolve_resp_vars(v)',
+            '        elif isinstance(d, list):',
+            '            for i, item in enumerate(d):',
+            '                d[i] = _resolve_resp_vars(item)',
+            '        elif isinstance(d, str):',
+            '            import re as _re',
+            '            for m in _re.finditer(r"\\$\\{RESPONSE\\.([^}]+)\\}", d):',
+            '                var_name = m.group(1)',
+            '                ctx_val = _session_ctx.get(var_name)',
+            '                if ctx_val is not None:',
+            '                    d = d.replace(m.group(0), str(ctx_val))',
+            '                    if var_name not in _resp_vars_found:',
+            '                        _resp_vars_found.append(var_name)',
+            '                        logger.info("【响应变量替换】%s = %s", var_name, str(ctx_val)[:100])',
+            '                else:',
+            '                    logger.warning("【响应变量替换】变量 %s 未在 session 上下文中找到 (当前已有: %s)", var_name, list(_session_ctx.keys()))',
+            '        return d',
+            '    _resolved_body = _resolve_resp_vars(_resolved_body) if _resolved_body else None',
+            '    if _resp_vars_found:',
+            '        logger.info("【响应变量替换】共替换 %d 个响应变量: %s", len(_resp_vars_found), _resp_vars_found)',
+            '    else:',
+            '        logger.info("【响应变量替换】无响应变量占位符")',
+        ])
 
         # ====== 详细日志6: 完整请求信息汇总（使用替换后的数据）=======
         resolved_headers_code = self._json_dumps(resolved_headers) if resolved_headers else "{}"
@@ -571,16 +573,41 @@ class PytestGenerator:
         lines.append(f'        timeout={timeout},')
         lines.append('    )')
 
-        # 存储测试上下文（响应信息），供失败时使用
-        lines.append(f'    _store_test_context("{func_name}", resp)')
+        # ====== 响应字段提取 ======
+        if extract_fields:
+            extract_fields_code = self._json_dumps(extract_fields)
+            lines.append(f'    _extract_cfg = {extract_fields_code}')
+            lines.append('    logger.info("【字段提取】开始提取响应字段, 配置数=%d: %s", len(_extract_cfg), [f["name"] for f in _extract_cfg])')
+            lines.append('    _extracted_data = _extract_fields_by_config(resp, _extract_cfg)')
+            lines.append('    logger.info("【字段提取】提取结果: %s", json.dumps(_extracted_data, ensure_ascii=False))')
+            # 将提取结果存入 session 上下文（供后续用例引用 ${RESPONSE.xxx}）
+            lines.append('    _session_ctx = _get_session_context()')
+            lines.append('    _session_ctx.update(_extracted_data)')
+            lines.append(f'    _store_test_context("{func_name}", resp, _extracted_data)')
+        else:
+            lines.append(f'    _extracted_data = {{}}')
+            lines.append(f'    _store_test_context("{func_name}", resp, None)')
 
         lines.append('    logger.info("【发送请求】请求已发送，等待响应...")')
 
         # ====== 详细日志7: 响应信息 ======
         lines.extend([
-            '    logger.info("【响应信息】状态码=%s, 响应时间=%.2fms")',
+            '    logger.info("【响应信息】状态码=%s, 响应时间=%.2fms", resp.status_code, resp.elapsed.total_seconds() * 1000)',
+            '    logger.info("    响应Headers: %s", json.dumps(dict(resp.headers), ensure_ascii=False)[:500])',
             '    logger.info("    响应体(前500字符): %s", resp.text[:500] if resp.text else "空响应")',
         ])
+
+        # ====== 详细日志7.1: 提取字段汇总 ======
+        if extract_fields:
+            extract_field_names = [f.get("name") for f in extract_fields]
+            lines.append(f'    logger.info("【提取字段】配置数={len(extract_fields)}, 字段名: {extract_field_names}")')
+            for f in extract_fields:
+                name = f.get("name")
+                path = f.get("path")
+                desc = f.get("description", "")
+                lines.append(f'    logger.info("    提取配置: {name} <- {path}  ({desc})")')
+        else:
+            lines.append('    logger.info("【提取字段】无提取配置")')
 
         # ====== 详细日志8: 响应体解析 ======
         lines.extend([
@@ -605,18 +632,26 @@ class PytestGenerator:
                 a_name = a.get("name", f"assertion_{i + 1}")
                 expected = a.get("expected")
                 path_str = a.get("path", "")
-                lines.append(f'    logger.info("    断言{i + 1}: 类型={a_type}, 名称={a_name}, 期望值={expected}, 路径={path_str}")')
+                # 使用 repr() 生成安全的 Python 字符串字面量
+                expected_str = repr(json.dumps(expected, ensure_ascii=False)) if expected is not None else 'None'
+                path_str_repr = repr(path_str)
+                lines.append(
+                    '    logger.info("    断言'
+                    + str(i + 1)
+                    + ': 类型=%s, 名称=%s, 期望值=%s, 路径=%s", '
+                    + repr(a_type) + ', ' + repr(a_name) + ', ' + expected_str + ', ' + path_str_repr + ')'
+                )
         else:
             lines.append('    logger.info("    无自定义断言，使用默认状态码断言")')
 
         lines.append('    logger.info("=" * 60)')
 
-        # 断言代码已包含正确的缩进（4空格），直接追加
+        # 断言
         lines.append('    logger.info("【执行断言】开始执行断言...")')
         assertions_code = self._build_assertions_code(assertions)
         lines.append(assertions_code)
 
-        # 数据库断言代码已包含正确的缩进（4空格），直接追加
+        # ====== 数据库断言（post_script + db_checks）======
         if post_script or db_checks:
             db_assertion_code = self._build_db_assertions_code(post_script, db_checks)
             lines.append(db_assertion_code)
@@ -639,41 +674,44 @@ class PytestGenerator:
         """
         生成断言代码。
 
-        自动追加业务 code 检查：
-        - HTTP 状态码 200 时，检查响应 body 中 code 是否为成功码
-        - 支持多种成功码格式：000000(6位), 00000000(8位), 0, success, SUCCESS
-        - 若业务 code 不为成功码，抛出包含完整响应内容的 AssertionError
-        - 确保请求通了但业务失败时（如 {code:330000007}）能被正确捕获为用例失败
+        总是自动追加一条业务 code 检查：
+        - HTTP 状态码为 200 时，检查响应 body 中的 code 字段是否为成功码
+        - 成功码包括：'000000'、'00000000'、'0'、'success'、'SUCCESS'
+        - 若 code 不在成功码列表，则抛出包含完整响应内容的 AssertionError
+        - 这样即使没有配置任何断言，也能捕获 "请求通了但业务失败" 的情况
         """
-        # 始终插入自动业务 code 检查在最前面
-        # 支持多种成功码格式
-        success_codes = repr(['000000', '00000000', '0', 'success', 'SUCCESS'])
-        lines = [
-            "    # ---- 自动检查：业务 code 是否为成功码 ----",
-            "    try:",
-            "        _biz_resp = resp.json()",
-            "    except Exception:",
-            "        _biz_resp = {}",
-            "    _biz_code = _biz_resp.get('code') if isinstance(_biz_resp, dict) else None",
-            f"    _success_codes = {success_codes}",
-            "    # 同时检查内层 data.code（部分接口在 data 里也有 code）",
-            "    _inner_code = None",
-            "    if isinstance(_biz_resp.get('data'), dict):",
-            "        _inner_code = _biz_resp['data'].get('code')",
-            "    _is_success = _biz_code in _success_codes or _inner_code in _success_codes",
-            "    if resp.status_code == 200 and not _is_success and _biz_code is not None:",
-            "        _fail_msg = '[业务code失败] code=' + str(_biz_code)",
-            "        _fail_msg += ', message=' + str(_biz_resp.get('message'))",
-            "        _fail_msg += ', 响应体=' + json.dumps(_biz_resp, ensure_ascii=False)",
-            "        logger.error('【断言失败】%s', _fail_msg)",
-            "        raise AssertionError(_fail_msg)",
-            "    if _is_success:",
-            "        logger.info('【业务code检查】code=%s (成功), HTTP状态码=%d, 通过', _biz_code, resp.status_code)",
-            "    else:",
-            "        logger.info('【业务code检查】code=%s (非标准成功码), HTTP状态码=%d', _biz_code, resp.status_code)",
-            "",
-        ]
+        # 自动追加：检查业务 code 是否为成功码（支持多种格式）
+        auto_business_check = (
+            '    # ---- 自动检查：业务 code 是否为成功码 ----\\n'
+            '    try:\\n'
+            '        _biz_resp = resp.json()\\n'
+            '    except Exception:\\n'
+            '        _biz_resp = {}\\n'
+            '    _biz_code = _biz_resp.get("code") if isinstance(_biz_resp, dict) else None\\n'
+            '    _success_codes = ["000000", "00000000", "0", "success", "SUCCESS"]\\n'
+            '    # 同时检查内层 data.code（部分接口在 data 里也有 code）\\n'
+            '    _inner_code = None\\n'
+            '    if isinstance(_biz_resp.get("data"), dict):\\n'
+            '        _inner_code = _biz_resp["data"].get("code")\\n'
+            '    _is_success = _biz_code in _success_codes or _inner_code in _success_codes\\n'
+            '    if resp.status_code == 200 and not _is_success and _biz_code is not None:\\n'
+            '        _fail_msg = "[业务code失败] code=" + str(_biz_code)\\n'
+            '        _fail_msg += ", message=" + str(_biz_resp.get("message"))\\n'
+            '        _fail_msg += ", 响应体=" + json.dumps(_biz_resp, ensure_ascii=False)\\n'
+            '        logger.error("【断言失败】%s", _fail_msg)\\n'
+            '        raise AssertionError(_fail_msg)\\n'
+            '    if _is_success:\\n'
+            '        logger.info("【业务code检查】code=%s (成功), HTTP状态码=%d, 通过", _biz_code, resp.status_code)\\n'
+            '    else:\\n'
+            '        logger.info("【业务code检查】code=%s (非标准成功码), HTTP状态码=%d", _biz_code, resp.status_code)\\n'
+            ''
+        ).replace('\\n', '\n')
 
+        # 无用户自定义断言时，仅保留自动 code 检查
+        if not assertions:
+            return auto_business_check + '    assert resp.status_code == 200, "HTTP状态码错误: " + str(resp.status_code)'
+
+        lines = [auto_business_check]
         for i, a in enumerate(assertions):
             a_type = a.get("type", "status_code")
             a_name = a.get("name", f"assertion_{i + 1}")
@@ -779,8 +817,8 @@ class PytestGenerator:
             for assertion in assertions:
                 field = assertion.get("field", "")
 
-                lines.append(f'        # db_check: {check_id}, 字段: {field}')
-                lines.append(f'        logger.info("【数据库断言】执行检查 {check_id} - 字段 {field}")')
+                lines.append('        # db_check: ' + str(check_id) + ', 字段: ' + repr(field))
+                lines.append('        logger.info("【数据库断言】执行检查 ' + repr(check_id) + ' - 字段 %s", ' + repr(field) + ')')
 
         lines.append('')
         lines.append('        logger.info("【数据库断言】执行完成: all_passed=%s, checks=%d, passed=%d, fields=%d, passed=%d",')
