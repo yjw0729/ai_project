@@ -1,6 +1,6 @@
 # common/db_entity/test_suite.py
 from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy import Column, Integer, String, Text, Enum, DateTime
+from sqlalchemy import Column, Integer, String, Text, Enum, DateTime, Numeric
 from sqlalchemy.dialects.mysql import JSON
 from datetime import datetime
 import enum
@@ -23,6 +23,15 @@ class SuiteStatus(enum.Enum):
     """测试套件状态枚举"""
     ACTIVE = "active"  # 激活
     INACTIVE = "inactive"  # 未激活
+
+
+class ExecutionStatus(enum.Enum):
+    """执行状态枚举"""
+    NOT_RUN = "not_run"  # 未执行
+    RUNNING = "running"  # 执行中
+    PASSED = "passed"  # 通过
+    FAILED = "failed"  # 失败
+    STOPPED = "stopped"  # 停止
 
 
 class TestSuite(Base):
@@ -48,6 +57,22 @@ class TestSuite(Base):
     # 配置信息
     tags = Column(JSON, comment='标签数组')
     config = Column(JSON, comment='套件配置')
+
+    # ===== 新增: 执行状态字段 =====
+    last_execution_status = Column(
+        Enum('not_run', 'running', 'passed', 'failed', 'stopped'),
+        nullable=False,
+        default='not_run',
+        comment='最近一次执行状态: not_run-未执行, running-执行中, passed-通过, failed-失败, stopped-停止'
+    )
+    last_execution_time = Column(DateTime, nullable=True, comment='最近一次执行时间')
+    last_execution_id = Column(String(50), nullable=True, comment='最近一次执行的执行ID')
+    total_executions = Column(Integer, nullable=False, default=0, comment='累计执行次数')
+    success_rate = Column(Numeric(5, 2), nullable=False, default=0.00, comment='累计成功率(%)')
+
+    # ===== 新增: 套件级默认请求配置 =====
+    # 说明: 这些配置会被套件下所有用例继承（如果用例没有单独配置）
+    case_default_config = Column(JSON, nullable=True, comment='套件下所有用例的默认请求配置(headers/params/body等)')
 
     # 状态管理
     status = Column(
@@ -382,6 +407,43 @@ class TestSuite(Base):
             module=self.module,
             tags=self.tags.copy() if self.tags else [],
             config=self.config.copy() if self.config else {},
+            # 新增: 复制套件级默认配置
+            case_default_config=self.case_default_config.copy() if self.case_default_config else None,
+            # 新增: 复制套件的执行状态字段
+            last_execution_status='not_run',
+            total_executions=0,
+            success_rate=0.00,
             status='active',
             creator=new_creator
         )
+
+    # ===== 新增: 执行状态相关方法 =====
+
+    def update_execution_status(self, status, execution_id=None, duration=None):
+        """更新执行状态"""
+        self.last_execution_status = status
+        if execution_id:
+            self.last_execution_id = execution_id
+        if status in ['passed', 'failed', 'stopped']:
+            self.last_execution_time = datetime.now()
+
+    def increment_execution_count(self, passed_count, total_count):
+        """更新执行统计"""
+        self.total_executions = (self.total_executions or 0) + 1
+        if total_count > 0:
+            new_rate = (passed_count / total_count) * 100
+            # 简单移动平均
+            if self.success_rate is None or self.success_rate == 0:
+                self.success_rate = new_rate
+            else:
+                self.success_rate = (self.success_rate + new_rate) / 2
+
+    def get_execution_summary(self):
+        """获取执行摘要"""
+        return {
+            'last_execution_status': self.last_execution_status,
+            'last_execution_time': self.last_execution_time.isoformat() if self.last_execution_time else None,
+            'last_execution_id': self.last_execution_id,
+            'total_executions': self.total_executions or 0,
+            'success_rate': float(self.success_rate or 0),
+        }

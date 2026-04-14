@@ -43,6 +43,11 @@ try:
     from api.http_ai_enhanced_generate_cases import enhanced_generate_opt
     from api.http_test_case_import import test_case_import_opt
     from app.routes import assertions_bp, data_factory_bp, tasks_bp
+
+    # 测试套件 Blueprint
+    from platform_service.api.http_test_suite import test_suite_bp
+    from platform_service.api.http_test_suite_case import test_suite_case_bp
+    from platform_service.api.http_test_suite_execute import test_suite_execute_bp
 except Exception as e:
     print('异常信息' + str(e))
     exit(0)
@@ -292,6 +297,11 @@ app.register_blueprint(
 app.register_blueprint(assertions_bp)
 app.register_blueprint(data_factory_bp)
 app.register_blueprint(tasks_bp)
+
+# 测试套件 API Blueprint（Blueprint 内部已定义 url_prefix="/api/test-suite"）
+app.register_blueprint(test_suite_bp)
+app.register_blueprint(test_suite_case_bp)
+app.register_blueprint(test_suite_execute_bp)
 
 
 # 在应用创建后立即检查系统状态
