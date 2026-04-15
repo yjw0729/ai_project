@@ -14,11 +14,18 @@ test_suite_bp = Blueprint("test_suite", __name__, url_prefix="/api/test-suite")
 
 
 def _json_response(body: Dict[str, Any], status: int = 200):
-    """构建 JSON 响应"""
-    resp = make_response(jsonify(body), status)
+    """构建 JSON 响应，确保中文不被转义"""
+    resp = make_response(json.dumps(body, ensure_ascii=False, default=_json_default), status)
     resp.headers["Content-Type"] = "application/json; charset=utf-8"
     resp.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
     return resp
+
+
+def _json_default(obj):
+    """处理 datetime 等对象为 ISO 格式字符串"""
+    if hasattr(obj, 'isoformat'):
+        return obj.isoformat()
+    raise TypeError(f"Object of type {type(obj).__name__} is not JSON serializable")
 
 
 def _get_user_id(req) -> str:
@@ -89,22 +96,22 @@ def create_test_suite():
         # 应用默认配置
         suite.apply_default_config()
 
-        # 保存
-        created = mapper.create(suite)
+        # 保存并提取结果（在 session 关闭前）
+        created_id, created_name, created_suite_type, created_module, created_status, created_creator, created_time = mapper.create_and_get(suite)
 
-        logger.info(f"[TestSuite] 创建测试套件: id={created.id}, name={created.name}")
+        logger.info(f"[TestSuite] 创建测试套件: id={created_id}, name={created_name}")
 
         return _json_response({
             "code": 200,
             "message": "创建成功",
             "data": {
-                "id": created.id,
-                "name": created.name,
-                "suite_type": created.suite_type,
-                "module": created.module,
-                "status": created.status,
-                "creator": created.creator,
-                "created_time": created.created_time.isoformat() if created.created_time else None
+                "id": created_id,
+                "name": created_name,
+                "suite_type": created_suite_type,
+                "module": created_module,
+                "status": created_status,
+                "creator": created_creator,
+                "created_time": created_time.isoformat() if created_time else None
             }
         })
 
@@ -172,51 +179,79 @@ def get_test_suite(suite_id: int):
         # 构作用例列表
         cases_data = []
         for sc in suite_cases:
-            case = case_mapper.get_by_id(sc.case_id)
+            case = case_mapper.get_by_id(sc["case_id"])
             if case:
+                has_custom = any([
+                    sc["url"] is not None,
+                    sc["request_headers"] is not None,
+                    sc["request_params"] is not None,
+                    sc["request_body"] is not None,
+                    sc["assertions"] is not None,
+                    sc["preconditions"] is not None,
+                    sc["test_steps"] is not None,
+                    sc["test_data"] is not None
+                ])
+                custom_summary = []
+                if sc["url"] is not None:
+                    custom_summary.append('URL')
+                if sc["request_headers"] is not None:
+                    custom_summary.append('请求头')
+                if sc["request_params"] is not None:
+                    custom_summary.append('请求参数')
+                if sc["request_body"] is not None:
+                    custom_summary.append('请求体')
+                if sc["assertions"] is not None:
+                    custom_summary.append('断言')
+                if sc["preconditions"] is not None:
+                    custom_summary.append('前置条件')
+                if sc["test_steps"] is not None:
+                    custom_summary.append('测试步骤')
+                if sc["test_data"] is not None:
+                    custom_summary.append('测试数据')
+
                 cases_data.append({
-                    "id": sc.id,
-                    "case_id": case.id,
-                    "case_id_str": getattr(case, "case_id", None),
-                    "case_name": case.name,
-                    "module": case.module,
-                    "priority": getattr(case, "priority", "P2"),
-                    "execution_order": sc.execution_order,
-                    "enabled": sc.enabled,
-                    "has_custom_config": sc.has_custom_config(),
-                    "custom_config_summary": sc.get_custom_config_summary(),
-                    "url": sc.url,
-                    "request_headers": sc.request_headers,
-                    "request_params": sc.request_params,
-                    "request_body": sc.request_body,
-                    "timeout": sc.timeout,
-                    "assertions": sc.assertions,
-                    "preconditions": sc.preconditions,
-                    "test_steps": sc.test_steps,
-                    "test_data": sc.test_data
+                    "id": sc["id"],
+                    "case_id": case["id"],
+                    "case_id_str": case.get("case_id"),
+                    "case_name": case["name"],
+                    "module": case["module"],
+                    "priority": case.get("priority", "P2"),
+                    "execution_order": sc["execution_order"],
+                    "enabled": sc["enabled"],
+                    "has_custom_config": has_custom,
+                    "custom_config_summary": custom_summary,
+                    "url": sc["url"],
+                    "request_headers": sc["request_headers"],
+                    "request_params": sc["request_params"],
+                    "request_body": sc["request_body"],
+                    "timeout": sc["timeout"],
+                    "assertions": sc["assertions"],
+                    "preconditions": sc["preconditions"],
+                    "test_steps": sc["test_steps"],
+                    "test_data": sc["test_data"]
                 })
 
         return _json_response({
             "code": 200,
             "message": "success",
             "data": {
-                "id": suite.id,
-                "name": suite.name,
-                "description": suite.description,
-                "suite_type": suite.suite_type,
-                "module": suite.module,
-                "tags": suite.get_tags() if callable(suite.get_tags) else suite.tags,
-                "config": suite.config,
-                "case_default_config": suite.case_default_config,
-                "last_execution_status": suite.last_execution_status,
-                "last_execution_time": suite.last_execution_time.isoformat() if suite.last_execution_time else None,
-                "last_execution_id": suite.last_execution_id,
-                "total_executions": suite.total_executions or 0,
-                "success_rate": float(suite.success_rate or 0),
-                "status": suite.status,
-                "creator": suite.creator,
-                "created_time": suite.created_time.isoformat() if suite.created_time else None,
-                "updated_time": suite.updated_time.isoformat() if suite.updated_time else None,
+                "id": suite["id"],
+                "name": suite["name"],
+                "description": suite["description"],
+                "suite_type": suite["suite_type"],
+                "module": suite["module"],
+                "tags": suite["tags"],
+                "config": suite["config"],
+                "case_default_config": suite["case_default_config"],
+                "last_execution_status": suite["last_execution_status"],
+                "last_execution_time": suite["last_execution_time"].isoformat() if suite["last_execution_time"] else None,
+                "last_execution_id": suite["last_execution_id"],
+                "total_executions": suite["total_executions"] or 0,
+                "success_rate": suite["success_rate"],
+                "status": suite["status"],
+                "creator": suite["creator"],
+                "created_time": suite["created_time"].isoformat() if suite["created_time"] else None,
+                "updated_time": suite["updated_time"].isoformat() if suite["updated_time"] else None,
                 "case_count": len(cases_data),
                 "enabled_case_count": len([c for c in cases_data if c["enabled"]]),
                 "cases": cases_data
@@ -257,9 +292,9 @@ def update_test_suite(suite_id: int):
             return _json_response({"code": 404, "message": "测试套件不存在", "data": None}, 404)
 
         # 检查名称唯一性（如果修改了名称）
-        if "name" in payload and payload["name"] != existing.name:
+        if "name" in payload and payload["name"] != existing["name"]:
             name_conflict = mapper.get_by_name(payload["name"])
-            if name_conflict and name_conflict.id != suite_id:
+            if name_conflict and name_conflict["id"] != suite_id:
                 return _json_response({"code": 400, "message": f"套件名称已存在: {payload['name']}", "data": None}, 400)
 
         # 构建更新数据
@@ -272,8 +307,12 @@ def update_test_suite(suite_id: int):
         if not update_data:
             return _json_response({"code": 400, "message": "没有需要更新的字段", "data": None}, 400)
 
-        # 执行更新
-        updated = mapper.update(suite_id, update_data)
+        # 执行更新并在 session 关闭前提取字段
+        result = mapper.update_and_get(suite_id, update_data)
+        if result is None:
+            return _json_response({"code": 404, "message": "测试套件不存在", "data": None}, 404)
+
+        updated_id, updated_name, updated_suite_type, updated_module, updated_status, updated_time = result
 
         logger.info(f"[TestSuite] 更新测试套件: id={suite_id}")
 
@@ -281,12 +320,12 @@ def update_test_suite(suite_id: int):
             "code": 200,
             "message": "更新成功",
             "data": {
-                "id": updated.id,
-                "name": updated.name,
-                "suite_type": updated.suite_type,
-                "module": updated.module,
-                "status": updated.status,
-                "updated_time": updated.updated_time.isoformat() if updated.updated_time else None
+                "id": updated_id,
+                "name": updated_name,
+                "suite_type": updated_suite_type,
+                "module": updated_module,
+                "status": updated_status,
+                "updated_time": updated_time.isoformat() if updated_time else None
             }
         })
 
@@ -312,10 +351,12 @@ def delete_test_suite(suite_id: int):
         if not existing:
             return _json_response({"code": 404, "message": "测试套件不存在", "data": None}, 404)
 
+        existing_name = existing["name"]
+
         # 执行硬删除（外键设置了 CASCADE，会自动删除关联记录）
         mapper.delete(suite_id, soft_delete=False)
 
-        logger.info(f"[TestSuite] 删除测试套件: id={suite_id}, name={existing.name}")
+        logger.info(f"[TestSuite] 删除测试套件: id={suite_id}, name={existing_name}")
 
         return _json_response({
             "code": 200,
@@ -354,6 +395,7 @@ def list_test_suites():
     """
     try:
         from common.db_mapper.test_suite_mapper import TestSuiteMapper
+        from common.db_mapper.test_suite_case_mapper import TestSuiteCaseMapper
 
         # 解析参数
         suite_type = request.args.get("suite_type")
@@ -367,6 +409,7 @@ def list_test_suites():
             page, page_size = 1, 20
 
         mapper = TestSuiteMapper()
+        suite_case_mapper = TestSuiteCaseMapper()
 
         # 获取列表
         if keyword or suite_type or module:
@@ -385,23 +428,25 @@ def list_test_suites():
         end = start + page_size
         paginated = suites[start:end]
 
-        # 构作用户数据
+        # 构作用户数据（附加 case_count）
         items = []
         for s in paginated:
+            case_count = suite_case_mapper.get_case_count(s["id"])
             items.append({
-                "id": s.id,
-                "name": s.name,
-                "description": s.description,
-                "suite_type": s.suite_type,
-                "module": s.module,
-                "tags": s.get_tags() if callable(s.get_tags) else s.tags,
-                "last_execution_status": s.last_execution_status,
-                "last_execution_time": s.last_execution_time.isoformat() if s.last_execution_time else None,
-                "total_executions": s.total_executions or 0,
-                "success_rate": float(s.success_rate or 0),
-                "status": s.status,
-                "creator": s.creator,
-                "created_time": s.created_time.isoformat() if s.created_time else None
+                "id": s["id"],
+                "name": s["name"],
+                "description": s["description"],
+                "suite_type": s["suite_type"],
+                "module": s["module"],
+                "tags": s["tags"],
+                "case_count": case_count,
+                "last_execution_status": s["last_execution_status"],
+                "last_execution_time": s["last_execution_time"].isoformat() if s["last_execution_time"] else None,
+                "total_executions": s["total_executions"] or 0,
+                "success_rate": float(s["success_rate"] or 0),
+                "status": s["status"],
+                "creator": s["creator"],
+                "created_time": s["created_time"].isoformat() if s["created_time"] else None
             })
 
         return _json_response({

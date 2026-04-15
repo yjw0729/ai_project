@@ -3267,30 +3267,6 @@ def submit_review():
         review_comment = data.get('review_comment', '')
         logger.info(f"提交审核: doc_id={doc_id}, action={action}, reviewer={reviewer}")
 
-        # ========== 检查JSON示例是否获取完成 ==========
-        if action == 'approve':
-            try:
-                review_mapper = ReviewRecordMapper()
-                json_status = review_mapper.check_json_samples_completed(doc_id)
-
-                if not json_status.get("completed"):
-                    pending_count = json_status.get("pending_count", 0)
-                    pending_interfaces = json_status.get("pending_interfaces", [])
-                    logger.warning(f"JSON示例未获取完成，pending_count={pending_count}")
-
-                    return json_response({
-                        "code": 400,
-                        "message": f"接口JSON示例正在获取中，请稍后再提交审核。还有 {pending_count} 个接口的JSON示例未获取完成: {', '.join(pending_interfaces[:3])}{'...' if len(pending_interfaces) > 3 else ''}",
-                        "data": {
-                            "pending_count": pending_count,
-                            "pending_interfaces": pending_interfaces
-                        }
-                    }, 400)
-
-                logger.info("JSON示例检查通过，所有接口的JSON示例已获取完成")
-            except Exception as check_err:
-                logger.warning(f"检查JSON示例状态失败: {check_err}，继续提交审核")
-
         # ========== 优先从数据库检查数据是否存在 ==========
         review_data = None
         try:

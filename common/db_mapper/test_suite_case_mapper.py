@@ -23,17 +23,54 @@ class TestSuiteCaseMapper:
     def get_by_id(self, id):
         """根据ID获取关联记录"""
         with self.session_scope() as session:
-            return session.query(self.entity_class).filter(
+            entity = session.query(self.entity_class).filter(
                 self.entity_class.id == id
             ).first()
+            if entity is None:
+                return None
+            return {
+                "id": entity.id,
+                "suite_id": entity.suite_id,
+                "case_id": entity.case_id,
+                "name": entity.name,
+                "case_id_str": entity.case_id_str,
+                "execution_order": entity.execution_order,
+                "enabled": entity.enabled,
+                "url": entity.url,
+                "request_headers": entity.request_headers,
+                "request_params": entity.request_params,
+                "request_body": entity.request_body,
+                "timeout": entity.timeout,
+                "assertions": entity.assertions,
+                "config": entity.config,
+                "preconditions": entity.preconditions,
+                "test_steps": entity.test_steps,
+                "test_data": entity.test_data,
+                "created_time": entity.created_time,
+                "updated_time": entity.updated_time,
+            }
 
     def get_by_suite_and_case(self, suite_id, case_id):
         """根据套件ID和案例ID获取关联记录"""
         with self.session_scope() as session:
-            return session.query(self.entity_class).filter(
+            entity = session.query(self.entity_class).filter(
                 self.entity_class.suite_id == suite_id,
                 self.entity_class.case_id == case_id
             ).first()
+            if entity is None:
+                return None
+            return {
+                "id": entity.id,
+                "suite_id": entity.suite_id,
+                "case_id": entity.case_id,
+            }
+
+    def get_case_count(self, suite_id):
+        """获取指定套件的用例数量"""
+        with self.session_scope() as session:
+            return session.query(self.entity_class).filter(
+                self.entity_class.suite_id == suite_id
+            ).count()
 
     def get_all(self):
         """获取所有关联记录"""
@@ -117,11 +154,14 @@ class TestSuiteCaseMapper:
             )
 
             if enabled_only:
-                # 使用JSON查询过滤启用的案例
+                # 启用判断逻辑：enabled字段为True或NULL，或config中enabled=true，或config为空/NULL
                 query = query.filter(
                     or_(
+                        self.entity_class.enabled == True,
+                        self.entity_class.enabled.is_(None),
                         self.entity_class.config.is_(None),
                         self.entity_class.config == 'null',
+                        self.entity_class.config == {},
                         self.entity_class.config['enabled'] == True
                     )
                 )
@@ -134,7 +174,32 @@ class TestSuiteCaseMapper:
             else:
                 query = query.order_by(asc(self.entity_class.case_id))
 
-            return query.all()
+            entities = query.all()
+
+            results = []
+            for e in entities:
+                results.append({
+                    "id": e.id,
+                    "suite_id": e.suite_id,
+                    "case_id": e.case_id,
+                    "name": e.name,
+                    "case_id_str": e.case_id_str,
+                    "execution_order": e.execution_order,
+                    "enabled": e.enabled,
+                    "url": e.url,
+                    "request_headers": e.request_headers,
+                    "request_params": e.request_params,
+                    "request_body": e.request_body,
+                    "timeout": e.timeout,
+                    "assertions": e.assertions,
+                    "config": e.config,
+                    "preconditions": e.preconditions,
+                    "test_steps": e.test_steps,
+                    "test_data": e.test_data,
+                    "created_time": e.created_time,
+                    "updated_time": e.updated_time,
+                })
+            return results
 
     def get_suites_by_case(self, case_id):
         """获取包含指定案例的所有套件"""
@@ -155,8 +220,11 @@ class TestSuiteCaseMapper:
             if enabled_only:
                 query = query.filter(
                     or_(
+                        self.entity_class.enabled == True,
+                        self.entity_class.enabled.is_(None),
                         self.entity_class.config.is_(None),
                         self.entity_class.config == 'null',
+                        self.entity_class.config == {},
                         self.entity_class.config['enabled'] == True
                     )
                 )
@@ -297,8 +365,11 @@ class TestSuiteCaseMapper:
             enabled_cases = session.query(self.entity_class).filter(
                 self.entity_class.suite_id == suite_id,
                 or_(
+                    self.entity_class.enabled == True,
+                    self.entity_class.enabled.is_(None),
                     self.entity_class.config.is_(None),
                     self.entity_class.config == 'null',
+                    self.entity_class.config == {},
                     self.entity_class.config['enabled'] == True
                 )
             ).count()
@@ -575,8 +646,11 @@ class TestSuiteCaseMapper:
             if enabled_only:
                 query = query.filter(
                     or_(
+                        self.entity_class.enabled == True,
+                        self.entity_class.enabled.is_(None),
                         self.entity_class.config.is_(None),
                         self.entity_class.config == 'null',
+                        self.entity_class.config == {},
                         self.entity_class.config['enabled'] == True
                     )
                 )

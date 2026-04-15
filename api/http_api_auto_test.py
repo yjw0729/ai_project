@@ -916,7 +916,7 @@ def execute_tests():
 
     # 5. 生成 pytest 测试文件
     try:
-        generator = PytestGenerator(output_dir=config_loader.generated_tests_dir)
+        generator = PytestGenerator(output_dir=config_loader.get_abs_path(config_loader.generated_tests_dir))
         test_file_path = generator.generate(
             cases=cases,
             execution_id=execution_id,
@@ -930,7 +930,7 @@ def execute_tests():
         return _json_response({"code": 500, "message": f"生成测试文件失败: {e}", "data": None}, 500)
 
     # 6. 构建 pytest 执行配置
-    allure_results_dir = os.path.join(config_loader.allure_results_dir, execution_id)
+    allure_results_dir = os.path.join(config_loader.get_abs_path(config_loader.allure_results_dir), execution_id)
     os.makedirs(allure_results_dir, exist_ok=True)
 
     # 根据 concurrency 决定执行模式
@@ -944,10 +944,10 @@ def execute_tests():
     run_config = RunConfig(
         test_paths=[test_file_path],
         mode=mode,
-        repeat_count=retry_times,
+        repeat_count=retry_times + 1,
         workers=workers,
         allure_results_dir=allure_results_dir,
-        allure_report_dir=os.path.join(config_loader.report_dir, execution_id),
+        allure_report_dir=os.path.join(config_loader.get_abs_path(config_loader.report_dir), execution_id),
         fail_fast=fail_fast,
         verbose=True,
         capture="sys",

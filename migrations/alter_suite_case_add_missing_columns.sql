@@ -1,0 +1,30 @@
+-- =====================================================
+-- 为 crosstest_test_suite_case 表补全缺失的字段
+--
+-- 说明:
+--   运行此脚本前请先在 MySQL 客户端中执行检查语句确认哪些字段缺失
+--
+-- 检查语句:
+--   SELECT COLUMN_NAME FROM information_schema.COLUMNS
+--   WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'crosstest_test_suite_case'
+--   ORDER BY ORDINAL_POSITION;
+--
+--   缺失的字段（对照 entity 定义）:
+--   - name               VARCHAR(200)
+--   - case_id_str        VARCHAR(50)
+--   - url                VARCHAR(500)
+--   - request_headers    JSON
+--   - request_params    JSON
+--   - request_body       JSON
+--   - timeout            INT DEFAULT 30
+--   - assertions          JSON
+--   - preconditions      TEXT
+--   - test_steps         JSON
+--   - test_data          JSON
+--
+-- 建议: 使用 Python 迁移脚本更安全
+--   python migrations/add_missing_suite_case_columns.py
+-- =====================================================
+
+-- 验证表结构
+DESCRIBE `crosstest_test_suite_case`;

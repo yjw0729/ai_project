@@ -23,16 +23,60 @@ class TestSuiteMapper:
     def get_by_id(self, id):
         """根据ID获取测试套件"""
         with self.session_scope() as session:
-            return session.query(self.entity_class).filter(
+            entity = session.query(self.entity_class).filter(
                 self.entity_class.id == id
             ).first()
+
+            if entity is None:
+                return None
+
+            return {
+                "id": entity.id,
+                "name": entity.name,
+                "description": entity.description,
+                "suite_type": entity.suite_type,
+                "module": entity.module,
+                "tags": entity.get_tags() if callable(entity.get_tags) else entity.tags,
+                "config": entity.config,
+                "case_default_config": entity.case_default_config,
+                "last_execution_status": entity.last_execution_status,
+                "last_execution_time": entity.last_execution_time,
+                "last_execution_id": entity.last_execution_id,
+                "total_executions": entity.total_executions or 0,
+                "success_rate": float(entity.success_rate or 0),
+                "status": entity.status,
+                "creator": entity.creator,
+                "created_time": entity.created_time,
+                "updated_time": entity.updated_time,
+            }
 
     def get_by_name(self, name):
         """根据名称获取测试套件"""
         with self.session_scope() as session:
-            return session.query(self.entity_class).filter(
+            entity = session.query(self.entity_class).filter(
                 self.entity_class.name == name
             ).first()
+            if entity is None:
+                return None
+            return {
+                "id": entity.id,
+                "name": entity.name,
+                "description": entity.description,
+                "suite_type": entity.suite_type,
+                "module": entity.module,
+                "tags": entity.get_tags() if callable(entity.get_tags) else entity.tags,
+                "config": entity.config,
+                "case_default_config": entity.case_default_config,
+                "last_execution_status": entity.last_execution_status,
+                "last_execution_time": entity.last_execution_time,
+                "last_execution_id": entity.last_execution_id,
+                "total_executions": entity.total_executions or 0,
+                "success_rate": float(entity.success_rate or 0),
+                "status": entity.status,
+                "creator": entity.creator,
+                "created_time": entity.created_time,
+                "updated_time": entity.updated_time,
+            }
 
     def get_all(self, active_only=True):
         """获取所有测试套件"""
@@ -42,25 +86,38 @@ class TestSuiteMapper:
             if active_only:
                 query = query.filter(self.entity_class.status == 'active')
 
-            return query.order_by(
+            entities = query.order_by(
                 self.entity_class.module,
                 self.entity_class.suite_type,
                 self.entity_class.name
             ).all()
 
+            return [{
+                "id": e.id,
+                "name": e.name,
+                "description": e.description,
+                "suite_type": e.suite_type,
+                "module": e.module,
+                "tags": e.get_tags() if callable(e.get_tags) else e.tags,
+                "last_execution_status": e.last_execution_status,
+                "last_execution_time": e.last_execution_time,
+                "total_executions": e.total_executions or 0,
+                "success_rate": float(e.success_rate or 0),
+                "status": e.status,
+                "creator": e.creator,
+                "created_time": e.created_time,
+            } for e in entities]
+
     def create(self, entity):
         """创建测试套件"""
-        # 验证套件
         errors = entity.validate_suite()
         if errors:
             raise ValueError(f"测试套件验证失败: {', '.join(errors)}")
 
-        # 检查名称唯一性
         existing = self.get_by_name(entity.name)
         if existing:
             raise ValueError(f"测试套件名称已存在: {entity.name}")
 
-        # 应用默认配置
         entity.apply_default_config()
 
         with self.session_scope() as session:
@@ -68,6 +125,32 @@ class TestSuiteMapper:
             session.flush()
             session.refresh(entity)
             return entity
+
+    def create_and_get(self, entity):
+        """创建测试套件并在 session 关闭前提取字段，避免 detached 问题"""
+        errors = entity.validate_suite()
+        if errors:
+            raise ValueError(f"测试套件验证失败: {', '.join(errors)}")
+
+        existing = self.get_by_name(entity.name)
+        if existing:
+            raise ValueError(f"测试套件名称已存在: {entity.name}")
+
+        entity.apply_default_config()
+
+        with self.session_scope() as session:
+            session.add(entity)
+            session.flush()
+            session.refresh(entity)
+            return (
+                entity.id,
+                entity.name,
+                entity.suite_type,
+                entity.module,
+                entity.status,
+                entity.creator,
+                entity.created_time,
+            )
 
     def update(self, id, update_data):
         """更新测试套件"""
@@ -77,9 +160,7 @@ class TestSuiteMapper:
             ).first()
 
             if entity:
-                # 检查是否修改了名称
                 if 'name' in update_data and update_data['name'] != entity.name:
-                    # 检查新名称是否已存在
                     existing = session.query(self.entity_class).filter(
                         self.entity_class.name == update_data['name'],
                         self.entity_class.id != id
@@ -92,13 +173,48 @@ class TestSuiteMapper:
                     if hasattr(entity, key) and key != 'id':
                         setattr(entity, key, value)
 
-                # 验证更新后的套件
                 errors = entity.validate_suite()
                 if errors:
                     session.rollback()
                     raise ValueError(f"更新后套件验证失败: {', '.join(errors)}")
 
                 return entity
+            return None
+
+    def update_and_get(self, id, update_data):
+        """更新测试套件并在 session 关闭前提取字段，避免 detached 问题"""
+        with self.session_scope() as session:
+            entity = session.query(self.entity_class).filter(
+                self.entity_class.id == id
+            ).first()
+
+            if entity:
+                if 'name' in update_data and update_data['name'] != entity.name:
+                    existing = session.query(self.entity_class).filter(
+                        self.entity_class.name == update_data['name'],
+                        self.entity_class.id != id
+                    ).first()
+
+                    if existing:
+                        raise ValueError(f"测试套件名称已存在: {update_data['name']}")
+
+                for key, value in update_data.items():
+                    if hasattr(entity, key) and key != 'id':
+                        setattr(entity, key, value)
+
+                errors = entity.validate_suite()
+                if errors:
+                    session.rollback()
+                    raise ValueError(f"更新后套件验证失败: {', '.join(errors)}")
+
+                return (
+                    entity.id,
+                    entity.name,
+                    entity.suite_type,
+                    entity.module,
+                    entity.status,
+                    entity.updated_time,
+                )
             return None
 
     def delete(self, id, soft_delete=True):
@@ -199,18 +315,33 @@ class TestSuiteMapper:
             if module:
                 query = query.filter(self.entity_class.module == module)
 
-            # 标签过滤
             if tags and isinstance(tags, list):
                 for tag in tags:
                     query = query.filter(
                         self.entity_class.tags.contains([tag])
                     )
 
-            return query.order_by(
+            entities = query.order_by(
                 self.entity_class.module,
                 self.entity_class.suite_type,
                 self.entity_class.name
             ).all()
+
+            return [{
+                "id": e.id,
+                "name": e.name,
+                "description": e.description,
+                "suite_type": e.suite_type,
+                "module": e.module,
+                "tags": e.get_tags() if callable(e.get_tags) else e.tags,
+                "last_execution_status": e.last_execution_status,
+                "last_execution_time": e.last_execution_time,
+                "total_executions": e.total_executions or 0,
+                "success_rate": float(e.success_rate or 0),
+                "status": e.status,
+                "creator": e.creator,
+                "created_time": e.created_time,
+            } for e in entities]
 
     def get_suite_statistics(self):
         """获取测试套件统计信息"""

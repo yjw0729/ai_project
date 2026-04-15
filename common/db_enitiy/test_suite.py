@@ -1,13 +1,10 @@
 # common/db_entity/test_suite.py
-from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy import Column, Integer, String, Text, Enum, DateTime, Numeric
 from sqlalchemy.dialects.mysql import JSON
+from common.db_enitiy import Base
 from datetime import datetime
 import enum
 import json
-
-# 生成ORM基类
-Base = declarative_base()
 
 
 class SuiteType(enum.Enum):
@@ -122,7 +119,6 @@ class TestSuite(Base):
         if isinstance(self.config, dict):
             self.config[key] = value
         else:
-            # 如果config不是字典，尝试转换
             try:
                 config_dict = json.loads(self.config) if isinstance(self.config, str) else {}
                 config_dict[key] = value
@@ -187,7 +183,6 @@ class TestSuite(Base):
         if self.module and len(self.module) > 100:
             errors.append("模块名称长度不能超过100个字符")
 
-        # 验证配置格式
         if self.config and not isinstance(self.config, (dict, list)):
             try:
                 json.loads(self.config)
@@ -201,14 +196,14 @@ class TestSuite(Base):
         default_configs = {
             'smoke': {
                 'priority': 'high',
-                'timeout': 1800,  # 30分钟
+                'timeout': 1800,
                 'stop_on_failure': True,
                 'notify_on_failure': True,
                 'max_retries': 0
             },
             'regression': {
                 'priority': 'medium',
-                'timeout': 7200,  # 2小时
+                'timeout': 7200,
                 'stop_on_failure': False,
                 'notify_on_completion': True,
                 'max_retries': 1,
@@ -216,13 +211,13 @@ class TestSuite(Base):
             },
             'function': {
                 'priority': 'medium',
-                'timeout': 3600,  # 1小时
+                'timeout': 3600,
                 'stop_on_failure': False,
                 'max_retries': 1
             },
             'performance': {
                 'priority': 'low',
-                'timeout': 10800,  # 3小时
+                'timeout': 10800,
                 'collect_metrics': True,
                 'performance_thresholds': {}
             },
@@ -240,7 +235,6 @@ class TestSuite(Base):
         if not self.config:
             self.config = self.get_default_config()
         else:
-            # 合并默认配置
             default_config = self.get_default_config()
             for key, value in default_config.items():
                 if key not in self.config:
@@ -308,10 +302,9 @@ class TestSuite(Base):
 
     @classmethod
     def _get_smoke_config(cls):
-        """获取冒烟测试配置"""
         return {
             'priority': 'high',
-            'timeout': 1800,  # 30分钟
+            'timeout': 1800,
             'stop_on_failure': True,
             'notify_on_failure': True,
             'max_retries': 0,
@@ -321,10 +314,9 @@ class TestSuite(Base):
 
     @classmethod
     def _get_regression_config(cls):
-        """获取回归测试配置"""
         return {
             'priority': 'medium',
-            'timeout': 7200,  # 2小时
+            'timeout': 7200,
             'stop_on_failure': False,
             'notify_on_completion': True,
             'max_retries': 1,
@@ -335,10 +327,9 @@ class TestSuite(Base):
 
     @classmethod
     def _get_function_config(cls):
-        """获取功能测试配置"""
         return {
             'priority': 'medium',
-            'timeout': 3600,  # 1小时
+            'timeout': 3600,
             'stop_on_failure': False,
             'max_retries': 1,
             'case_selection': 'functional',
@@ -347,42 +338,39 @@ class TestSuite(Base):
 
     @classmethod
     def _get_performance_config(cls):
-        """获取性能测试配置"""
         return {
             'priority': 'low',
-            'timeout': 10800,  # 3小时
+            'timeout': 10800,
             'collect_metrics': True,
             'performance_thresholds': {
-                'response_time': 2000,  # 2秒
-                'throughput': 100,  # 100请求/秒
-                'error_rate': 0.01  # 1%错误率
+                'response_time': 2000,
+                'throughput': 100,
+                'error_rate': 0.01
             },
             'load_profile': {
                 'users': 100,
-                'ramp_up': 300,  # 5分钟
-                'duration': 1800  # 30分钟
+                'ramp_up': 300,
+                'duration': 1800
             }
         }
 
     def get_suite_icon(self):
-        """获取套件类型图标（用于UI显示）"""
         icons = {
-            'smoke': '🔥',
-            'regression': '🔄',
-            'function': '⚙️',
-            'performance': '📈',
-            'custom': '🔧'
+            'smoke': 'fire',
+            'regression': 'sync',
+            'function': 'setting',
+            'performance': 'line-chart',
+            'custom': 'tool'
         }
-        return icons.get(self.suite_type, '📁')
+        return icons.get(self.suite_type, 'folder')
 
     def get_suite_color(self):
-        """获取套件类型颜色（用于UI显示）"""
         colors = {
-            'smoke': '#ff6f3cd',  # 浅黄色
-            'regression': '#d1ecf1',  # 浅蓝色
-            'function': '#d4edda',  # 浅绿色
-            'performance': '#e2e3e5',  # 浅灰色
-            'custom': '#f8d7da'  # 浅红色
+            'smoke': '#fff3cd',
+            'regression': '#d1ecf1',
+            'function': '#d4edda',
+            'performance': '#e2e3e5',
+            'custom': '#f8d7da'
         }
         return colors.get(self.suite_type, '#ffffff')
 
@@ -391,11 +379,8 @@ class TestSuite(Base):
         return self.is_active()
 
     def get_estimated_duration(self, avg_case_duration=120):
-        """估算套件执行时间（秒）"""
-        # 基础时间 + 每个案例的平均时间
-        # 实际实现需要从关联的案例中获取案例数量
-        base_time = 300  # 5分钟基础时间
-        estimated_cases = 10  # 假设平均10个案例
+        base_time = 300
+        estimated_cases = 10
         return base_time + (estimated_cases * avg_case_duration)
 
     def duplicate(self, new_name, new_creator, description=None):
@@ -407,17 +392,13 @@ class TestSuite(Base):
             module=self.module,
             tags=self.tags.copy() if self.tags else [],
             config=self.config.copy() if self.config else {},
-            # 新增: 复制套件级默认配置
             case_default_config=self.case_default_config.copy() if self.case_default_config else None,
-            # 新增: 复制套件的执行状态字段
             last_execution_status='not_run',
             total_executions=0,
             success_rate=0.00,
             status='active',
             creator=new_creator
         )
-
-    # ===== 新增: 执行状态相关方法 =====
 
     def update_execution_status(self, status, execution_id=None, duration=None):
         """更新执行状态"""
@@ -432,7 +413,6 @@ class TestSuite(Base):
         self.total_executions = (self.total_executions or 0) + 1
         if total_count > 0:
             new_rate = (passed_count / total_count) * 100
-            # 简单移动平均
             if self.success_rate is None or self.success_rate == 0:
                 self.success_rate = new_rate
             else:

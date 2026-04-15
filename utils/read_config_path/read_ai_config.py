@@ -25,7 +25,11 @@ def load_ai_config_refresh() -> Dict[str, Any]:
 def _load_ai_config_impl() -> Dict[str, Any]:
     """不含缓存的内部实现"""
     base_dir = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))  # 项目根目录下的utils/../..
-    config_path = os.path.join(base_dir, "app", "ai_config.json")
+    # 优先查找 app/config/app/ai_config.json（项目约定路径）
+    config_path = os.path.join(base_dir, "app", "config", "app", "ai_config.json")
+    if not os.path.exists(config_path):
+        # 回退到 app/ai_config.json
+        config_path = os.path.join(base_dir, "app", "ai_config.json")
     if not os.path.exists(config_path):
         return {}
     try:

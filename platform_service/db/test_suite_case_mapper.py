@@ -117,12 +117,14 @@ class TestSuiteCaseMapper:
             )
 
             if enabled_only:
-                # 使用JSON查询过滤启用的案例
+                # 启用条件：enabled字段为True或NULL，或config中enabled=true，或config为空/NULL（默认启用）
                 query = query.filter(
                     or_(
+                        self.entity_class.enabled == True,
+                        self.entity_class.enabled.is_(None),
+                        self.entity_class.config['enabled'] == True,
                         self.entity_class.config.is_(None),
-                        self.entity_class.config == 'null',
-                        self.entity_class.config['enabled'] == True
+                        self.entity_class.config == 'null'
                     )
                 )
 
@@ -155,9 +157,11 @@ class TestSuiteCaseMapper:
             if enabled_only:
                 query = query.filter(
                     or_(
+                        self.entity_class.enabled == True,
+                        self.entity_class.enabled.is_(None),
+                        self.entity_class.config['enabled'] == True,
                         self.entity_class.config.is_(None),
-                        self.entity_class.config == 'null',
-                        self.entity_class.config['enabled'] == True
+                        self.entity_class.config == 'null'
                     )
                 )
 
@@ -297,9 +301,11 @@ class TestSuiteCaseMapper:
             enabled_cases = session.query(self.entity_class).filter(
                 self.entity_class.suite_id == suite_id,
                 or_(
+                    self.entity_class.enabled == True,
+                    self.entity_class.enabled.is_(None),
+                    self.entity_class.config['enabled'] == True,
                     self.entity_class.config.is_(None),
-                    self.entity_class.config == 'null',
-                    self.entity_class.config['enabled'] == True
+                    self.entity_class.config == 'null'
                 )
             ).count()
 
@@ -575,9 +581,11 @@ class TestSuiteCaseMapper:
             if enabled_only:
                 query = query.filter(
                     or_(
+                        self.entity_class.enabled == True,
+                        self.entity_class.enabled.is_(None),
+                        self.entity_class.config['enabled'] == True,
                         self.entity_class.config.is_(None),
-                        self.entity_class.config == 'null',
-                        self.entity_class.config['enabled'] == True
+                        self.entity_class.config == 'null'
                     )
                 )
 

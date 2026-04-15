@@ -148,7 +148,7 @@ class TestCaseExecutor:
             env_config = self.env_config_mapper.get_by_id(env_id)
 
         # 3. 批量读取 API 配置
-        api_config_ids = [c.api_config_id for c in raw_cases if c.api_config_id]
+        api_config_ids = [c.get('api_config_id') for c in raw_cases if c.get('api_config_id')]
         api_configs = {}
         for acid in api_config_ids:
             cfg = self.api_config_mapper.get_by_id(acid)
@@ -163,7 +163,7 @@ class TestCaseExecutor:
                 execution_cases.append(exec_data)
             except Exception as e:
                 logger.error("【TestCaseExecutor】构建用例 %s 执行数据失败: %s",
-                            case.case_id or case.id, e)
+                            case.get('case_id') or case.get('id'), e)
 
         logger.info("【TestCaseExecutor】成功加载 %d 个用例", len(execution_cases))
         return execution_cases
@@ -176,41 +176,41 @@ class TestCaseExecutor:
     ) -> TestCaseExecutionData:
         """构建单个用例的执行数据"""
         # API 配置
-        api_cfg = api_configs.get(case.api_config_id) if case.api_config_id else None
+        api_cfg = api_configs.get(case['api_config_id']) if case.get('api_config_id') else None
         logger.info("【_build_execution_data】case_id=%s, api_config_id=%s, api_cfg=%s",
-                    getattr(case, 'case_id', None) or case.id, case.api_config_id,
+                    case.get('case_id') or case.get('id'), case.get('api_config_id'),
                     f"ApiConfig(id={api_cfg.id}, name={getattr(api_cfg, 'name', 'N/A')}, "
                     f"method={getattr(api_cfg, 'method', 'N/A')}, "
                     f"path={getattr(api_cfg, 'api_path', 'N/A')})"
                     if api_cfg else "None")
 
         # 解析 preconditions JSON，提取变量配置
-        preconditions_str = getattr(case, 'preconditions', '') or ''
+        preconditions_str = case.get('preconditions', '') or ''
         case_variables = self._parse_preconditions(preconditions_str)
         logger.info("【_build_execution_data】解析 preconditions: 原始=%s, 提取变量=%s",
                     preconditions_str[:200] if preconditions_str else '(空)',
                     case_variables)
 
         # 解析断言（包括 HTTP 断言和 db_check 引用）
-        assertions = self._parse_assertions(case.expected_results)
+        assertions = self._parse_assertions(case.get('expected_results'))
 
         # 解析数据库断言配置（post_script 和 db_checks）
-        post_script, db_checks = self._parse_db_checks(case.expected_results)
+        post_script, db_checks = self._parse_db_checks(case.get('expected_results'))
 
         # 解析响应字段提取配置（优先从 expected_results 解析，否则 fallback 到 extract_fields 列）
-        extract_fields = self._parse_extract_fields(case.expected_results)
+        extract_fields = self._parse_extract_fields(case.get('expected_results'))
         if not extract_fields:
-            extract_fields = getattr(case, 'extract_fields', []) or []
+            extract_fields = case.get('extract_fields') or []
             if extract_fields:
                 logger.info("【_build_execution_data】从 extract_fields 列读取到 %d 个提取配置: %s",
                            len(extract_fields), [f.get('name') for f in extract_fields])
 
         # 请求参数（优先用 test_data；若为空则 fallback 到 test_steps）
         headers = self._merge_headers(env_config, api_cfg)
-        query_params, request_body = self._parse_request_params(case.test_data, api_cfg, getattr(case, "test_steps", None))
+        query_params, request_body = self._parse_request_params(case.get('test_data'), api_cfg, case.get('test_steps'))
 
         # 优先级字段可能为枚举值
-        priority = str(case.priority) if case.priority else "P2"
+        priority = str(case.get('priority')) if case.get('priority') else "P2"
 
         method = self._get_method(api_cfg)
         path = self._get_path(api_cfg)
@@ -223,10 +223,10 @@ class TestCaseExecutor:
                     len(post_script), len(db_checks))
 
         return TestCaseExecutionData(
-            case_id=case.case_id or f"DB_{case.id}",
-            db_id=case.id,
-            name=case.name,
-            module=case.module,
+            case_id=case.get('case_id') or f"DB_{case.get('id')}",
+            db_id=case.get('id'),
+            name=case.get('name'),
+            module=case.get('module'),
             priority=priority,
             method=method,
             path=path,
@@ -236,11 +236,11 @@ class TestCaseExecutor:
             assertions=assertions,
             post_script=post_script,
             db_checks=db_checks,
-            timeout=case.timeout or 30,
-            max_retry_times=case.max_retry_times or 0,
-            tags=case.tags or [],
-            case_status=str(case.case_status) if case.case_status else "enabled",
-            description=case.description or "",
+            timeout=case.get('timeout') or 30,
+            max_retry_times=case.get('max_retry_times') or 0,
+            tags=case.get('tags') or [],
+            case_status=str(case.get('case_status')) if case.get('case_status') else "enabled",
+            description=case.get('description') or "",
             preconditions=preconditions_str,
             case_variables=case_variables,
             extract_fields=extract_fields,

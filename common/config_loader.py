@@ -21,10 +21,12 @@ class ConfigLoader:
 
     _instance: Optional["ConfigLoader"] = None
     _config: Dict[str, Any] = {}
+    _base_dir: str = ""
 
     def __new__(cls) -> "ConfigLoader":
         if cls._instance is None:
             cls._instance = super().__new__(cls)
+            cls._instance._base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
             cls._instance._load_all()
         return cls._instance
 
@@ -36,8 +38,7 @@ class ConfigLoader:
 
     def _load_json(self, rel_path: str) -> Dict[str, Any]:
         """加载 JSON 配置文件"""
-        base = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        path = os.path.join(base, rel_path)
+        path = os.path.join(self._base_dir, rel_path)
         if not os.path.exists(path):
             logger.warning("配置文件不存在: %s", path)
             return {}
@@ -98,6 +99,10 @@ class ConfigLoader:
     def report_dir(self) -> str:
         """报告输出目录"""
         return self.get("api_auto_test.storage.report_dir", "outputs/reports")
+
+    def get_abs_path(self, rel_path: str) -> str:
+        """将相对路径转换为基于项目根目录的绝对路径"""
+        return os.path.join(self._base_dir, rel_path)
 
     def reload(self) -> None:
         """重新加载所有配置"""

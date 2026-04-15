@@ -1,13 +1,10 @@
 # common/db_entity/test_suite_case.py
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Boolean
+from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Boolean, Text
 from sqlalchemy.dialects.mysql import JSON
 from sqlalchemy.orm import relationship
+from common.db_enitiy import Base
 from datetime import datetime
 import json
-
-# 生成ORM基类
-Base = declarative_base()
 
 
 class TestSuiteCase(Base):
@@ -20,6 +17,10 @@ class TestSuiteCase(Base):
     # 外键关联
     suite_id = Column(Integer, ForeignKey('crosstest_test_suite.id', ondelete='CASCADE'), nullable=False, comment='套件ID')
     case_id = Column(Integer, ForeignKey('crosstest_test_case.id', ondelete='CASCADE'), nullable=False, comment='案例ID')
+
+    # 用例基本信息（从 test_case 复制冗余存储，避免每次查询都 JOIN）
+    name = Column(String(200), nullable=True, comment='用例名称(冗余存储)')
+    case_id_str = Column(String(50), nullable=True, comment='业务用例编号(冗余存储)')
 
     # 关联配置
     execution_order = Column(Integer, default=0, comment='执行顺序')
@@ -134,10 +135,10 @@ class TestSuiteCase(Base):
         """检查失败时是否跳过后续案例"""
         return self.get_config_value('skip_on_failure', False)
 
-    # ===== 新增: 请求配置相关方法 =====
+    # ===== 独立配置相关方法 =====
 
     def has_custom_config(self):
-        """检查是否有独立配置的请求参数"""
+        """检查是否有独立配置"""
         return any([
             self.url is not None,
             self.request_headers is not None,
@@ -186,7 +187,7 @@ class TestSuiteCase(Base):
 
     def update_request_config(self, url=None, request_headers=None, request_params=None,
                              request_body=None, timeout=None, assertions=None):
-        """更新请求配置"""
+        """更新请求配置（仅更新非空字段）"""
         if url is not None:
             self.url = url
         if request_headers is not None:
@@ -201,7 +202,7 @@ class TestSuiteCase(Base):
             self.assertions = assertions
 
     def clear_request_config(self):
-        """清除请求配置，恢复继承用例配置"""
+        """清除独立配置，恢复继承模式"""
         self.url = None
         self.request_headers = None
         self.request_params = None
@@ -213,33 +214,41 @@ class TestSuiteCase(Base):
         self.test_data = None
 
     def copy_from_case(self, test_case):
-        """从测试用例复制配置（用于初始化独立配置）"""
-        if test_case:
-            if self.url is None and hasattr(test_case, 'url'):
-                self.url = getattr(test_case, 'url', None)
-            if self.request_headers is None and hasattr(test_case, 'request_headers'):
-                self.request_headers = getattr(test_case, 'request_headers', None)
-            if self.request_params is None and hasattr(test_case, 'request_params'):
-                self.request_params = getattr(test_case, 'request_params', None)
-            if self.request_body is None and hasattr(test_case, 'request_body'):
-                self.request_body = getattr(test_case, 'request_body', None)
-            if self.timeout is None and hasattr(test_case, 'timeout'):
-                self.timeout = getattr(test_case, 'timeout', None)
-            if self.assertions is None and hasattr(test_case, 'assertions'):
-                self.assertions = getattr(test_case, 'assertions', None)
-            if self.preconditions is None:
-                self.preconditions = getattr(test_case, 'preconditions', None)
-            if self.test_steps is None:
-                self.test_steps = getattr(test_case, 'test_steps', None)
-            if self.test_data is None:
-                self.test_data = getattr(test_case, 'test_data', None)
+        """从测试用例复制配置（用于初始化独立配置），支持 ORM 实体或字典"""
+        if test_case is None:
+            return
+
+        is_dict = isinstance(test_case, dict)
+
+        def _get(obj, key, default=None):
+            if is_dict:
+                return obj.get(key, default) if obj else default
+            return getattr(obj, key, default)
+
+        # 复制用例基本信息
+        if self.name is None:
+            self.name = _get(test_case, 'name')
+        if self.case_id_str is None:
+            self.case_id_str = _get(test_case, 'case_id')
+
+        if self.timeout is None:
+            self.timeout = _get(test_case, 'timeout')
+        if self.preconditions is None:
+            self.preconditions = _get(test_case, 'preconditions')
+        if self.test_steps is None:
+            self.test_steps = _get(test_case, 'test_steps')
+        if self.test_data is None:
+            self.test_data = _get(test_case, 'test_data')
 
     @classmethod
-    def create_association(cls, suite_id, case_id, execution_order=0, config=None, enabled=True):
+    def create_association(cls, suite_id, case_id, execution_order=0, config=None, enabled=True,
+                          name=None, case_id_str=None):
         """创建关联记录"""
         return cls(
             suite_id=suite_id,
             case_id=case_id,
+            name=name,
+            case_id_str=case_id_str,
             execution_order=execution_order,
             enabled=enabled,
             config=config or {}
@@ -247,6 +256,7 @@ class TestSuiteCase(Base):
 
     @classmethod
     def create_with_request_config(cls, suite_id, case_id, execution_order=0,
+                                  name=None, case_id_str=None,
                                   url=None, request_headers=None, request_params=None,
                                   request_body=None, timeout=30, assertions=None,
                                   preconditions=None, test_steps=None, test_data=None):
@@ -254,6 +264,8 @@ class TestSuiteCase(Base):
         return cls(
             suite_id=suite_id,
             case_id=case_id,
+            name=name,
+            case_id_str=case_id_str,
             execution_order=execution_order,
             enabled=True,
             url=url,

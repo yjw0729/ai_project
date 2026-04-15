@@ -161,7 +161,7 @@ class PytestGenerator:
             "",
             "# ---- 响应字段提取：session 级上下文（供后续用例引用）----",
             "from common.test_executor.response_extract import _get_session_context",
-            "from conftest import _extract_fields_by_config, _store_test_context",
+            "from outputs.generated_tests.conftest import _extract_fields_by_config, _store_test_context",
             "",
             "logger = logging.getLogger(__name__)",
             "",

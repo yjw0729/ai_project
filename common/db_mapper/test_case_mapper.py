@@ -36,27 +36,28 @@ class TestCaseMapper:
             entity = session.query(self.entity_class).filter(
                 self.entity_class.id == id
             ).first()
-            if entity:
-                # 预先访问所有在 TestCaseExecutor._build_execution_data 中可能用到的属性，
-                # 避免 expunge 后访问 lazy-load 字段触发 DetachedInstanceError
-                _ = entity.case_id
-                _ = entity.name
-                _ = entity.module
-                _ = entity.priority
-                _ = entity.api_config_id
-                _ = entity.expected_results
-                _ = entity.extract_fields
-                _ = entity.test_data
-                _ = entity.timeout
-                _ = entity.max_retry_times
-                _ = entity.tags
-                _ = entity.case_status
-                _ = entity.description
-                _ = entity.test_steps
-                _ = entity.status
-                _ = entity.version
-                session.expunge(entity)
-            return entity
+            if entity is None:
+                return None
+            return {
+                "id": entity.id,
+                "case_id": entity.case_id,
+                "name": entity.name,
+                "module": entity.module,
+                "priority": entity.priority,
+                "api_config_id": entity.api_config_id,
+                "expected_results": entity.expected_results,
+                "extract_fields": entity.extract_fields,
+                "test_data": entity.test_data,
+                "timeout": entity.timeout,
+                "max_retry_times": entity.max_retry_times,
+                "tags": entity.tags,
+                "case_status": entity.case_status,
+                "description": entity.description,
+                "test_steps": entity.test_steps,
+                "status": entity.status,
+                "version": entity.version,
+                "preconditions": entity.preconditions,
+            }
 
     def get_by_name_and_module(self, name, module):
         """根据名称和模块获取测试案例"""

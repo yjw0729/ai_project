@@ -1,12 +1,9 @@
 # common/db_entity/test_case.py
-from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy import Column, Integer, String, Text, Enum, Boolean, DateTime, JSON
+from common.db_enitiy import Base
 from datetime import datetime
 import json
 import enum
-
-# 生成ORM基类
-Base = declarative_base()
 
 
 class TestCasePriority(enum.Enum):

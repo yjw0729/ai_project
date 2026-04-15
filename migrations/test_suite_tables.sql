@@ -70,11 +70,15 @@ CREATE TABLE crosstest_test_suite_case (
     suite_id INT NOT NULL COMMENT '套件ID',
     case_id INT NOT NULL COMMENT '用例ID',
 
+    -- 用例基本信息（从 test_case 复制冗余存储，避免每次查询都 JOIN）
+    name VARCHAR(200) COMMENT '用例名称(冗余存储)',
+    case_id_str VARCHAR(50) COMMENT '业务用例编号(冗余存储)',
+
     -- 关联配置
     execution_order INT DEFAULT 0 COMMENT '执行顺序',
     enabled BOOLEAN DEFAULT TRUE COMMENT '是否启用',
 
-    -- 新增: 独立请求配置字段
+    -- 独立请求配置字段
     -- 说明: 如果这些字段有值，则使用这些值；否则回退到 test_case 表的配置
     url VARCHAR(500) COMMENT '请求URL(独立配置，为空则继承用例)',
     request_headers JSON COMMENT '请求头(独立配置)',
@@ -83,8 +87,13 @@ CREATE TABLE crosstest_test_suite_case (
     timeout INT DEFAULT 30 COMMENT '超时秒数',
     assertions JSON COMMENT '断言配置(独立配置)',
 
-    -- 保留: 原有 config 字段（用于扩展配置，如前置脚本等）
+    -- 扩展配置字段
     config JSON COMMENT '其他配置(JSON)',
+
+    -- 用例内容字段（优先级: suite_case 自己的 > 从 test_case 复制过来的）
+    preconditions TEXT COMMENT '前置条件(可独立覆盖)',
+    test_steps JSON COMMENT '测试步骤(可独立覆盖)',
+    test_data JSON COMMENT '测试数据(可独立覆盖)',
 
     -- 审计字段
     created_time DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
