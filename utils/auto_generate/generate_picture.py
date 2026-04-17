@@ -33,13 +33,13 @@ def cv2_pil_add_text(card_name:str, card_number:str, img_type:str):
     :param img_type:shenfenzheng
     :return:
     '''
-    root_path = read_xml(get_xml_path(), 'root_path')
+    root_path = read_xml(get_xml_path(), 'root_path').rstrip('/')
     deno_front_path = read_xml(get_xml_path(), 'identity_card_img') + img_type
     print(deno_front_path)
     im = Image.open(deno_front_path + '/demo-front.png')
     draw = ImageDraw.Draw(im)
     song_ttf = root_path + '/docs/ttf/song.ttf'
-    cu_ttf = root_path + 'docs/ttf/cu.otf'
+    cu_ttf = root_path + '/docs/ttf/cu.otf'
     fnt_song = ImageFont.truetype(song_ttf, 26)
     fnt_hei = ImageFont.truetype(cu_ttf, 25)
 
@@ -63,12 +63,13 @@ def cv2_pil_add_text(card_name:str, card_number:str, img_type:str):
         # 增加字间距
         num_left = num_left + 19
 
-    save_path = root_path + 'docs/static/out_identity_img/'
+    save_path = root_path + '/docs/static/out_identity_img/'
     if not os.path.exists(save_path):
         os.makedirs(save_path)
     # 保存绘制的图片
     im_rgb = im.convert('RGB')
     im_rgb.save(save_path + card_number + '.jpg')
+    return save_path + card_number + '.jpg'
 
 
 if __name__ == '__main__':

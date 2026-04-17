@@ -3408,6 +3408,32 @@ def submit_review():
         except Exception as db_err:
             logger.warning(f"更新数据库审核记录失败: {db_err}")
 
+        # ★★★ 修复：直接更新汇总表状态 ★★★
+        # 需求文档类型（PRODUCT_DESIGN）只在 summary 表有记录，update_fields 的同步逻辑
+        # 依赖 entity != None，但 update_status 会直接 return None，导致汇总表状态未更新。
+        # 此处兜底，确保无论明细表是否存在，汇总表的状态都能被正确更新。
+        try:
+            summary_mapper = ReviewSummaryMapper()
+            summary_result = summary_mapper.update_status(
+                doc_id=doc_id,
+                status=review_data.status,
+                reviewer=reviewer,
+                review_comment=review_comment
+            )
+            if summary_result:
+                logger.info(f"汇总表状态已更新: doc_id={doc_id}, status={review_data.status}")
+            else:
+                logger.warning(f"汇总表记录不存在或更新失败: doc_id={doc_id}，尝试 upsert")
+                # 如果 update_status 返回 None（记录不存在），用 upsert 创建
+                summary_mapper.upsert(
+                    doc_id=doc_id,
+                    status=review_data.status,
+                    reviewer=reviewer,
+                    review_comment=review_comment,
+                )
+        except Exception as summary_err:
+            logger.error(f"更新汇总表状态失败: {summary_err}", exc_info=True)
+
         # 同步内存缓存
         _review_data_store[doc_id] = review_data
 

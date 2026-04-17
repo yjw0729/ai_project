@@ -20,12 +20,7 @@ try:
     from flask.logging import default_handler
     from utils.read_config_path.read_app_dir import get_xml_path, read_xml
     from utils.read_config_path.read_logs_dir import create_log_file
-    from api.http_bank_card_no import bankcard_number_opt
-    from api.http_create_address import generate_address_opt
-    from api.http_create_idCardNo import generate_idCardNo_opt
-    from api.http_create_customer import generate_information_opt
-    from api.http_create_phone import create_phone_opt
-    from api.http_create_picture import draw_picture_opt
+    from api.http_data_factory import data_generate_bp
     from api.http_ai_generate_cases import ai_generate_opt
     from api.http_ai_doc_parser import doc_parser_opt
     from api.http_database_config import db_config_opt
@@ -266,12 +261,7 @@ def log_system_status():
     app.logger.info("="*60)
 
 
-app.register_blueprint(bankcard_number_opt, url_prefix="/data_service")
-app.register_blueprint(generate_address_opt, url_prefix="/data_service")
-app.register_blueprint(generate_information_opt, url_prefix="/data_service")
-app.register_blueprint(generate_idCardNo_opt, url_prefix="/data_service")
-app.register_blueprint(create_phone_opt, url_prefix="/data_service")
-app.register_blueprint(draw_picture_opt, url_prefix="/data_service")
+app.register_blueprint(data_generate_bp, url_prefix="/data_service")
 app.register_blueprint(ai_generate_opt, url_prefix="/ai_service")
 app.register_blueprint(doc_parser_opt, url_prefix="/ai_service")
 app.register_blueprint(db_config_opt, url_prefix="/data_service")
