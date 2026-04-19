@@ -47,7 +47,9 @@ sys_path.insert(0, project_root)
 sys_path.insert(0, os_path.join(project_root, '..'))
 
 try:
-    from app.application import app as application, app_port
+    from app import create_app
+    application = create_app()
+    app_port = application.config.get("APP_PORT", 8080)
 except Exception as e:
     print('[run]启动失败：' + str(e))
     exit(0)
@@ -57,19 +59,21 @@ _kill_stale_processes_on_port(int(app_port))
 
 
 def get_local_ip():
-    """获取本机IP地址"""
+    """获取本机IP地址，优先返回本地回环地址"""
+    # 优先使用 127.0.0.1，确保本地可访问
     try:
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        s.connect(("8.8.8.8", 80))
+        s.settimeout(1)
+        s.connect(("127.0.0.1", 1))
         ip = s.getsockname()[0]
         s.close()
         return ip
-    except:
+    except Exception:
         return '127.0.0.1'
 
 
 server_config = {
-    'server': get_local_ip()  # 或直接使用 '127.0.0.1'
+    'server': '127.0.0.1'
 }
 
 if __name__ == '__main__':

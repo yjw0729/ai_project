@@ -5,7 +5,7 @@
 用法：python add_missing_suite_case_columns.py
 """
 import logging
-from common.datacase_function.contect_db import db_session
+from common.db.datacase.contect_db import db_session
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(message)s')
 logger = logging.getLogger(__name__)

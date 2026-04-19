@@ -14,7 +14,7 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional, Union
 from dataclasses import dataclass, field
 
-from common.datacase_function.contect_db import db_session
+from common.db.datacase.contect_db import db_session
 
 logger = logging.getLogger(__name__)
 

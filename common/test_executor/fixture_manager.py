@@ -66,7 +66,7 @@ class FixtureManager:
         if env_id is None:
             return {}
         try:
-            from common.db_mapper.environment_config_mapper import EnvironmentConfigMapper
+            from common.db.mapper.environment_config_mapper import EnvironmentConfigMapper
             mapper = EnvironmentConfigMapper()
             env = mapper.get_by_id(env_id)
             if env:
@@ -112,7 +112,7 @@ class FixtureManager:
         try:
             from sqlalchemy import create_engine
             from sqlalchemy.orm import sessionmaker
-            from common.db_enitiy.base import Base
+            from common.db.entity import Base
             from app.db_config import DB_CONFIG
 
             engine = create_engine(DB_CONFIG.get("url", ""), pool_pre_ping=True)

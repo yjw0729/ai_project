@@ -17,7 +17,7 @@
     "password": "opts_test"
   },
 
-    "default": {
+  "default": {
     "type": "mysql+pymysql",
     "host": "22.50.6.73",
     "port": 3306,
@@ -25,9 +25,4 @@
     "user": "qa",
     "password": "qa_tester"
   }
-
-
 }
-
-
-

@@ -25,15 +25,18 @@ logs/
 *.log
 app_flask*
 
-
-#app (exclude config templates)
+# App (ignore except config templates)
 app/
 !app/config/
 app/config/__pycache__/
 
+# Data directory (keep test_docs/ tracked — used by RAG)
+data/
+!data/test_docs/
+
+
 # Uploads / generated data
 uploads/
-data/generated_cases/
 
 # Cache / coverage
 .pytest_cache/
@@ -43,27 +46,25 @@ data/generated_cases/
 coverage.xml
 htmlcov/
 
+# Test / generated outputs
 test/
+outputs/
+chroma_data/
 
-data/
-*.json
-
-README/
+# Database (runtime artifact)
+db/task.db
+db/*.db
+*.db
 
 # Distribution / packaging
 build/
 dist/
 *.egg-info/
 
-# Environment & config secrets (keep if you want them tracked)
+# Environment & config secrets
 .env.local
 .env.*.local
 
-
+# Temp files
 temps/
 *.txt
-
-
-
-
-

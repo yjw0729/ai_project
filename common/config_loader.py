@@ -15,7 +15,7 @@ class ConfigLoader:
     """
     配置加载器单例。
 
-    自动从 config/ 目录加载配置文件，
+    自动从 app/ 目录加载配置文件，
     支持默认值，避免配置文件缺失时崩溃。
     """
 
@@ -33,7 +33,7 @@ class ConfigLoader:
     def _load_all(self) -> None:
         """加载所有配置文件"""
         self._config = {
-            "api_auto_test": self._load_json("config/api_auto_test_config.json"),
+            "api_auto_test": self._load_json("app/api_auto_test_config.json"),
         }
 
     def _load_json(self, rel_path: str) -> Dict[str, Any]:

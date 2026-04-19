@@ -50,9 +50,9 @@ def create_redis_client():
 
 def start_test_worker():
     """启动 Test Worker"""
-    from workers.test_worker import TestWorker
+    from workers.mq_consumer import TestWorker
     from platform_service.service.task_service import TaskService
-    from common.db_mapper.task_execution_mapper import TaskExecutionMapper
+    from common.db.mapper import TaskExecutionMapper
 
     logger.info("启动 Test Worker...")
 

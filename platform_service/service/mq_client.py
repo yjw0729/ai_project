@@ -19,7 +19,7 @@ import pika
 import structlog
 from typing import Callable, Optional, Dict, Any
 
-from shared.common_proto.mq_messages import MQMessage
+from common.mq.mq_messages import MQMessage
 
 logger = structlog.get_logger()
 
@@ -160,14 +160,14 @@ def get_mq_client() -> MQClient:
 
 
 def publish_llm_generate(task_id: str, user_id: str, payload: Dict[str, Any], trace_id: str = "") -> bool:
-    from shared.common_proto.mq_messages import build_llm_generate_message, LLM_GENERATE_QUEUE
+    from common.mq.mq_messages import build_llm_generate_message, LLM_GENERATE_QUEUE
 
     message = build_llm_generate_message(task_id, user_id, payload, trace_id)
     return get_mq_client().publish(LLM_GENERATE_QUEUE.routing_key, message)
 
 
 def publish_test_execute(task_id: str, user_id: str, payload: Dict[str, Any], trace_id: str = "") -> bool:
-    from shared.common_proto.mq_messages import build_test_execute_message, TEST_EXECUTE_QUEUE
+    from common.mq.mq_messages import build_test_execute_message, TEST_EXECUTE_QUEUE
 
     message = build_test_execute_message(task_id, user_id, payload, trace_id)
     return get_mq_client().publish(TEST_EXECUTE_QUEUE.routing_key, message)

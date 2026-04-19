@@ -11,7 +11,6 @@
 
 from common.test_executor.api_test_runner import APITestRunner, TestResult
 from common.test_executor.parameter_resolver import ParameterResolver
-from common.test_executor.assertion_engine import AssertionEngine, AssertionResult
 from common.test_executor.fixture_manager import FixtureManager
 from common.test_executor.report_generator import ReportGenerator
 
@@ -19,8 +18,6 @@ __all__ = [
     "APITestRunner",
     "TestResult",
     "ParameterResolver",
-    "AssertionEngine",
-    "AssertionResult",
     "FixtureManager",
     "ReportGenerator",
 ]

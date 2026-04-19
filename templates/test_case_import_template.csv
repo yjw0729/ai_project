@@ -1,2 +1,0 @@
-用例名称,所属模块,所属系统,接口ID,优先级,案例描述,前置条件,测试步骤,期望结果,测试数据,标签,最大重试次数,超时时间(秒),状态,创建人
-验证用户登录成功,用户管理,订单系统,1,P0,验证用户名密码正确时登录成功,数据库中有测试用户数据,"[{'step_number':1,'description':'打开登录页面','expected':'页面正常加载'},{'step_number':2,'description':'输入用户名密码','expected':'输入成功'},{'step_number':3,'description':'点击登录按钮','expected':'登录成功并跳转'}]","[{'keyword':'登录成功','check_type':'response_contains'}]","{""username"":""testuser"",""password"":""Test@123""}",冒烟测试;登录,0,30,draft,张三

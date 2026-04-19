@@ -14,9 +14,9 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
 from common.test_executor.expected_results import ExpectedResultsParser
-from common.db_mapper.test_case_mapper import TestCaseMapper
-from common.db_mapper.api_config_mapper import ApiConfigMapper
-from common.db_mapper.environment_config_mapper import EnvironmentConfigMapper
+from common.db.mapper.test_case_mapper import TestCaseMapper
+from common.db.mapper.api_config_mapper import ApiConfigMapper
+from common.db.mapper.environment_config_mapper import EnvironmentConfigMapper
 from common.test_executor.db_check_parser import DbCheckConfigParser
 
 logger = logging.getLogger(__name__)

@@ -6,7 +6,7 @@
 """
 
 from sqlalchemy import text
-from common.datacase_function.contect_db import db_session
+from common.db.datacase.contect_db import db_session
 
 def migrate_add_extract_fields():
     """添加 extract_fields 字段到 crosstest_test_case 表"""

@@ -1,7 +1,6 @@
 import os
 import re
 from typing import List, Dict, Any, Optional
-import docs
 import pdfplumber
 
 def _parse_type_and_length(type_str: str) -> Dict[str, Any]:

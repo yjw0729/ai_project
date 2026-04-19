@@ -14,7 +14,7 @@ import yaml
 logger = logging.getLogger(__name__)
 
 # 默认配置文件路径
-DEFAULT_PROMPTS_FILE = "app/config/prompts.yaml"
+DEFAULT_PROMPTS_FILE = "app/prompts.yaml"
 
 
 class PromptManager:

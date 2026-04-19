@@ -33,7 +33,7 @@ def _get_task_service():
             )
             redis_client.ping()
 
-            from common.db_mapper.task_execution_mapper import TaskExecutionMapper
+            from common.db.mapper.task_execution_mapper import TaskExecutionMapper
             from platform_service.service.task_service import TaskService
 
             _task_service = TaskService(redis_client, TaskExecutionMapper())

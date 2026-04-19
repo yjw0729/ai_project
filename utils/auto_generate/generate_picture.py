@@ -1,6 +1,6 @@
 import os
 from PIL import Image, ImageDraw, ImageFont
-from utils.read_config_path.read_app_dir import read_xml, get_xml_path
+from common.config import read_xml, get_xml_path
 
 
 def check_card_number(card_name:str)->bool:

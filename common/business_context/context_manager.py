@@ -217,7 +217,7 @@ class BusinessContextManager:
     def _extract_from_image(self, image_path: str) -> str:
         """从图片提取文本（OCR）- 使用公共图片分析模块"""
         try:
-            from common.image_analysis.image_analyzer import analyze_image
+            from utils.image_analysis.image_analyzer import analyze_image
 
             # 使用公共模块进行分析（默认使用详细流程图分析提示词）
             result = analyze_image(image_path=image_path, mode="flowchart")
@@ -234,38 +234,14 @@ class BusinessContextManager:
             return f"图片 OCR 失败: {str(e)}"
 
     def _query_vector_db(self, query: str, collection_name: str = "documents", top_k: int = 5) -> str:
-        """从向量数据库查询内容（直接返回查询结果）"""
-        try:
-            from common.rag.services.rag_services import RAGService
-            import asyncio
-
-            rag = RAGService(config_dir="app/config")
-
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            result = loop.run_until_complete(
-                rag.query(question=query, collection_name=collection_name, top_k=top_k)
-            )
-            loop.close()
-
-            if result and result.get("answer"):
-                sources = result.get("sources", [])
-                content_parts = [result["answer"]]
-                for source in sources:
-                    if source.get("content"):
-                        content_parts.append(f"\n\n[{source.get('source', '文档')}]\n{source['content']}")
-                return "\n".join(content_parts)
-
-            return "向量数据库查询结果为空"
-
-        except Exception as e:
-            logger.error(f"向量数据库查询失败: {e}")
-            return f"向量数据库查询失败: {str(e)}"
+        """从向量数据库查询内容（向量数据库已移除，始终返回空结果）"""
+        logger.warning("向量数据库已移除，无法进行向量查询")
+        return "向量数据库已移除，请使用其他数据源"
 
     def _get_context_by_id(self, context_id: int) -> str:
         """从数据库获取已有上下文"""
         try:
-            from common.db_mapper.business_context_mapper import BusinessContextMapper
+            from common.db.mapper.business_context_mapper import BusinessContextMapper
             mapper = BusinessContextMapper()
             context = mapper.get_by_id(context_id)
             if context:
@@ -468,67 +444,9 @@ class BusinessContextManager:
         business_module: str = None,
         document_title: str = None
     ) -> bool:
-        """将清洗后的内容存入 RAG"""
-        try:
-            from common.rag.services.rag_services import RAGService
-            import asyncio
-            import os
-            from datetime import datetime
-
-            rag = RAGService(config_dir="app/config")
-
-            # 保存为临时文件供 RAG 处理
-            temp_dir = os.path.join(os.getcwd(), "data", "cleaned_contexts")
-            os.makedirs(temp_dir, exist_ok=True)
-
-            # 构建文件名
-            file_hash = hash(result.cleaned_content[:100]) % 100000
-            temp_file = os.path.join(temp_dir, f"cleaned_{file_hash}.txt")
-
-            with open(temp_file, "w", encoding="utf-8") as f:
-                f.write(result.cleaned_content)
-
-            # 构建 RAG source_config
-            source_configs = [{
-                "source_type": "file",
-                "paths": [temp_file],
-                "extensions": ["txt"],
-                "recursive": False,
-                "metadata": {
-                    "document_title": document_title or "业务上下文",
-                    "document_type": "business_context",
-                    "business_module": business_module or "default",
-                    "source_type": source.source_type,
-                    "original_length": len(result.original_content),
-                    "cleaned_length": len(result.cleaned_content),
-                    "upload_time": datetime.now().isoformat(),
-                    "structured_knowledge": json.dumps(result.structured_knowledge, ensure_ascii=False),
-                    "summary": result.summary,
-                    "keywords": ",".join(result.keywords) if result.keywords else ""
-                }
-            }]
-
-            # 存入 RAG
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            build_result = loop.run_until_complete(
-                rag.build_knowledge_base(
-                    source_configs=source_configs,
-                    collection_name=source.collection_name
-                )
-            )
-            loop.close()
-
-            if build_result.get("status") == "success":
-                logger.info(f"清洗后的内容已存入 RAG: {source.collection_name}")
-                return True
-            else:
-                logger.error(f"RAG 存储失败: {build_result.get('message')}")
-                return False
-
-        except Exception as e:
-            logger.error(f"存入 RAG 失败: {e}")
-            return False
+        """将清洗后的内容存入 RAG（向量数据库已移除，该功能不可用）"""
+        logger.warning("向量数据库已移除，无法将内容存入 RAG")
+        return False
 
     def _extract_text(self, response: Any) -> str:
         """从 LLM 响应中提取文本"""
@@ -578,7 +496,7 @@ class BusinessContextManager:
     def get_context_by_id(self, context_id: int) -> Optional[CleanedContext]:
         """根据ID获取业务上下文"""
         try:
-            from common.db_mapper.business_context_mapper import BusinessContextMapper
+            from common.db.mapper.business_context_mapper import BusinessContextMapper
             mapper = BusinessContextMapper()
             context = mapper.get_by_id(context_id)
 

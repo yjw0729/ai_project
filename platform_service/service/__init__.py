@@ -19,7 +19,7 @@ from platform_service.service.async_api_helpers import (
     _get_user_id,
     build_async_response,
 )
-from platform_service.service.rate_limiter import RateLimiter, rate_limit, RATE_LIMIT_CONFIG
+from platform_service.service.rate_limiter import rate_limit
 
 __all__ = [
     "TaskService",
@@ -33,6 +33,5 @@ __all__ = [
     "_get_mq_client",
     "_get_user_id",
     "build_async_response",
-    "RateLimiter",
     "rate_limit",
 ]

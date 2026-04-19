@@ -15,7 +15,7 @@ from threading import Lock
 import requests
 
 from common.test_executor.parameter_resolver import ParameterResolver
-from common.test_executor.assertion_engine import AssertionEngine, AssertionResult
+from common.assertion import AssertionExecutor
 
 logger = logging.getLogger(__name__)
 
@@ -69,7 +69,7 @@ class APITestRunner:
 
         self.session: requests.Session = requests.Session()
         self.resolver: ParameterResolver = ParameterResolver()
-        self.assertion_engine: AssertionEngine = AssertionEngine()
+        self.assertion_engine: AssertionExecutor = AssertionExecutor()
 
         self.results: List[TestResult] = []
         self._results_lock: Lock = Lock()
@@ -108,11 +108,10 @@ class APITestRunner:
 
             # 5. 执行断言
             assertions_raw = resolved.get("assertions") or resolved.get("expected_results") or []
-            assertion_results: List[AssertionResult] = self.assertion_engine.assert_all(
-                response, assertions_raw
-            )
+            executor = AssertionExecutor(assertions_raw)
+            assertion_results = executor.execute(response)
             assertion_dicts = [r.to_dict() for r in assertion_results]
-            all_passed = all(r.passed for r in assertion_results)
+            all_passed = executor.all_passed(assertion_results)
 
             # 6. 提取变量
             variable_mapping = resolved.get("variable_mapping") or resolved.get("extract_variables") or {}
