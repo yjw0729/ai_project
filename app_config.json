@@ -1,0 +1,9 @@
+{
+  "host": "0.0.0.0",
+  "port": 8080,
+  "debug": false,
+  "secret_key": "change-me-in-production",
+  "max_content_length": 52428800,
+  "upload_folder": "uploads",
+  "log_level": "INFO"
+}

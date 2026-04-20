@@ -359,9 +359,20 @@ class EnhancedCaseGenerator:
 ```
 请直接返回 JSON 对象，不要包含其他文字。"""
 
-    def __init__(self, llm_client: Optional[OpenAILLMClient] = None):
-        self.llm_client = llm_client
-        self.context_manager = BusinessContextManager(llm_client)
+    def __init__(self, llm_client: Optional[OpenAILLMClient] = None, ai_type: Optional[str] = None):
+        import logging as _logging
+        _logger = _logging.getLogger(__name__)
+        if llm_client is not None and ai_type is not None:
+            _logger.warning(
+                "【EnhancedCaseGenerator】同时传入了 llm_client 和 ai_type，"
+                "ai_type 将被忽略，以 llm_client 为准。"
+            )
+        if ai_type:
+            from common.llm.llm_client import LLMClient
+            self.llm_client = LLMClient.from_model(ai_type)
+        else:
+            self.llm_client = llm_client
+        self.context_manager = BusinessContextManager(self.llm_client)
 
     def _prepare_context_source(self, config: GenerationConfig) -> Optional[ContextSource]:
         """准备业务上下文来源"""
@@ -711,12 +722,17 @@ def generate_test_cases(
     params_example: Dict[str, Any] = None,
     business_context: Union[str, Dict, int] = None,
     llm_client: OpenAILLMClient = None,
+    ai_type: Optional[str] = None,
     max_interface_cases: int = 10,
     max_scenario_cases: int = 5,
     **kwargs
 ) -> GenerationResult:
     """
     便捷的用例生成函数
+
+    Args:
+        ai_type: 模型名称，对应 ai_config.json 中 models 下的 key。
+                 传入时会优先于 llm_client 创建新客户端。
     """
     config = GenerationConfig(
         api_name=api_name,
@@ -729,5 +745,5 @@ def generate_test_cases(
         **kwargs
     )
 
-    generator = EnhancedCaseGenerator(llm_client)
+    generator = EnhancedCaseGenerator(llm_client, ai_type=ai_type)
     return generator.generate(config)

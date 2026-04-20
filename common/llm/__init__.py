@@ -13,6 +13,7 @@ LLM层模块索引。
 from common.llm.llm_client import LLMClient, MockLLMClient, chat, chat_with_prompt, get_client
 from common.llm.ai_case_generator import generate_api_test_cases
 from common.llm.api_doc_analyzer import APIDocAnalyzer, FlowchartAnalyzer
+from common.llm.enhanced_case_generator import EnhancedCaseGenerator, generate_test_cases
 
 __all__ = [
     # 客户端
@@ -23,6 +24,8 @@ __all__ = [
     "get_client",
     # 用例生成
     "generate_api_test_cases",
+    "EnhancedCaseGenerator",
+    "generate_test_cases",
     # 文档分析
     "APIDocAnalyzer",
     "FlowchartAnalyzer",

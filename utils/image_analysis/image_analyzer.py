@@ -28,11 +28,32 @@ class ImageAnalyzer:
 
     GENERAL_OCR_PROMPT = """请识别图片中的所有文字内容，保持原有格式。如果是流程图或表格，请描述其结构。"""
 
-    def __init__(self, model: str = None):
-        self.model = model or self.DEFAULT_MODEL
+    def __init__(self, model: str = None, ai_type: Optional[str] = None):
+        """
+        Args:
+            model: 直接指定模型名称（如 "qwen-vl-max"）。
+                   与 ai_type 二选一，ai_type 优先。
+            ai_type: 模型配置名称，对应 ai_config.json 中 models 下的 key。
+                     传入时会自动从配置中解析 base_url、model、api_key。
+        """
+        if ai_type:
+            from common.config import get_model_config
+            cfg = get_model_config(ai_type)
+            if cfg:
+                self.model = cfg.get("model", self.DEFAULT_MODEL)
+                self._config_api_key = cfg.get("api_key", "")
+            else:
+                self.model = model or self.DEFAULT_MODEL
+                self._config_api_key = ""
+        else:
+            self.model = model or self.DEFAULT_MODEL
+            self._config_api_key = ""
 
     def _get_api_key(self) -> Optional[str]:
         import os
+        # 优先使用配置中的 api_key，其次环境变量
+        if self._config_api_key:
+            return self._config_api_key
         return os.environ.get("DASHSCOPE_API_KEY") or os.environ.get("OPENAI_API_KEY")
 
     def _call_multimodal_model(

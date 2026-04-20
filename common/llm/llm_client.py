@@ -97,6 +97,57 @@ class LLMClient:
         if not self.api_key:
             logger.warning("DASHSCOPE_API_KEY 未配置，调用大模型将会失败。")
 
+    @classmethod
+    def from_config(cls, config: Dict[str, Any]) -> "LLMClient":
+        """
+        从配置字典构建客户端。
+
+        Args:
+            config: 模型配置字典，需包含 api_key、base_url、model 等字段。
+
+        Returns:
+            LLMClient 实例。
+        """
+        return cls(
+            api_key=config.get("api_key"),
+            model=config.get("model", DEFAULT_MODEL),
+            temperature=float(config.get("temperature", 0.2)),
+            max_tokens=int(config.get("max_tokens", 16_384)),
+            timeout=int(config.get("timeout", 1200)),
+            api_url=config.get("base_url", DASHSCOPE_API_URL),
+        )
+
+    @classmethod
+    def from_model(cls, model_name: Optional[str] = None) -> "LLMClient":
+        """
+        按模型名称从全局配置构建客户端。
+
+        Args:
+            model_name: 模型名称，对应 ai_config.json 中 models 下的 key。
+                        传入 None 或空字符串时使用默认模型。
+
+        Returns:
+            LLMClient 实例。若模型名称不存在则抛出 ValueError。
+
+        Raises:
+            ValueError: 指定的模型名称在配置中不存在或未启用。
+        """
+        from common.config import get_model_config, get_default_model_name
+
+        name = (model_name or "").strip()
+        if not name:
+            name = get_default_model_name()
+
+        model_cfg = get_model_config(name)
+        if model_cfg is None:
+            from common.config import get_available_models
+            available = get_available_models()
+            raise ValueError(
+                f"模型名称 '{name}' 在 ai_config.json 中不存在或未启用。"
+                f"当前可用模型: {available if available else '请检查 models 配置'}"
+            )
+        return cls.from_config(model_cfg)
+
     # --- 公共调用入口 ---
     def chat(
         self,

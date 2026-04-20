@@ -9,7 +9,7 @@ import os
 import yaml
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 # xml 读取工具
 try:
@@ -72,7 +72,7 @@ def get_default_settings() -> Dict[str, Any]:
 
 
 # =========================================================================
-# AI 配置（app/ai_config.json）
+# AI 配置（app/ai_config.json，支持多模型动态切换）
 # =========================================================================
 
 @lru_cache()
@@ -100,6 +100,7 @@ def _load_ai_config_impl() -> Dict[str, Any]:
             data = json.load(f)
     except Exception:
         return {}
+    # 环境变量覆盖（兼容旧格式的单模型配置）
     if os.environ.get("QWEN_API_KEY"):
         data["api_key"] = os.environ["QWEN_API_KEY"]
     if os.environ.get("QWEN_BASE_URL"):
@@ -107,6 +108,43 @@ def _load_ai_config_impl() -> Dict[str, Any]:
     if os.environ.get("QWEN_MODEL"):
         data["model"] = os.environ["QWEN_MODEL"]
     return data
+
+
+def get_default_model_name() -> str:
+    """获取默认模型名称。"""
+    cfg = load_ai_config()
+    return cfg.get("default", "qwen")
+
+
+def get_model_config(model_name: str) -> Optional[Dict[str, Any]]:
+    """
+    按模型名称获取配置。
+
+    环境变量优先级：{MODEL_NAME}_API_KEY / {MODEL_NAME}_BASE_URL / {MODEL_NAME}_MODEL
+    会与配置文件中对应模型的字段合并，环境变量优先生效。
+    """
+    cfg = load_ai_config()
+    models = cfg.get("models", {})
+    model_cfg = models.get(model_name)
+    if not model_cfg:
+        return None
+
+    # 环境变量覆盖
+    name_upper = model_name.upper()
+    env_prefix = f"{name_upper}_"
+    result = dict(model_cfg)
+    for key in ("api_key", "base_url", "model"):
+        env_val = os.environ.get(f"{env_prefix}{key.upper()}")
+        if env_val:
+            result[key] = env_val
+    return result
+
+
+def get_available_models() -> List[str]:
+    """获取所有已配置且 enabled=true 的模型名称列表。"""
+    cfg = load_ai_config()
+    models = cfg.get("models", {})
+    return [name for name, m in models.items() if m.get("enabled", True)]
 
 
 # =========================================================================

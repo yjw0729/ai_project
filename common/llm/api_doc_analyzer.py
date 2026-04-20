@@ -22,8 +22,16 @@ logger = logging.getLogger(__name__)
 class APIDocAnalyzer:
     """API文档分析器，支持OpenAPI和普通接口文档"""
 
-    def __init__(self, llm_client: Optional[LLMClient] = None):
-        self.llm = llm_client or MockLLMClient()
+    def __init__(self, llm_client: Optional[LLMClient] = None, ai_type: Optional[str] = None):
+        if llm_client is not None and ai_type is not None:
+            logger.warning(
+                "【APIDocAnalyzer】同时传入了 llm_client 和 ai_type，"
+                "ai_type 将被忽略，以 llm_client 为准。"
+            )
+        if ai_type:
+            self.llm = LLMClient.from_model(ai_type)
+        else:
+            self.llm = llm_client or MockLLMClient()
 
     def analyze_openapi(self, doc_content: str) -> List[Dict[str, Any]]:
         """
@@ -385,8 +393,16 @@ class APIDocAnalyzer:
 class FlowchartAnalyzer:
     """流程图分析器，从图片描述或文本描述中提取业务流程"""
 
-    def __init__(self, llm_client: Optional[LLMClient] = None):
-        self.llm = llm_client or MockLLMClient()
+    def __init__(self, llm_client: Optional[LLMClient] = None, ai_type: Optional[str] = None):
+        if llm_client is not None and ai_type is not None:
+            logger.warning(
+                "【FlowchartAnalyzer】同时传入了 llm_client 和 ai_type，"
+                "ai_type 将被忽略，以 llm_client 为准。"
+            )
+        if ai_type:
+            self.llm = LLMClient.from_model(ai_type)
+        else:
+            self.llm = llm_client or MockLLMClient()
 
     @staticmethod
     def _parse_json_robust(text: str) -> Optional[Dict[str, Any]]:

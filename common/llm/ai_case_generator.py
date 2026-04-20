@@ -492,9 +492,19 @@ def generate_api_test_cases(
     max_cases: Optional[int] = None,
     llm_client: Optional[LLMClient] = None,
     persist_dir: Optional[str] = None,
+    ai_type: Optional[str] = None,
 ) -> Dict[str, Any]:
     logger = logging.getLogger(__name__)
-    client = llm_client or MockLLMClient()
+    if llm_client is not None and ai_type is not None:
+        logger.warning(
+            "【generate_api_test_cases】同时传入了 llm_client 和 ai_type，"
+            "ai_type 参数将被忽略，以 llm_client 为准。"
+        )
+    if llm_client is None:
+        if ai_type:
+            llm_client = LLMClient.from_model(ai_type)
+        else:
+            llm_client = MockLLMClient()
     def _run_once(params_subset: Dict[str, Any], extra_hint: Optional[str] = None) -> Tuple[str, List[Dict[str, Any]]]:
         prompt = build_prompt(
             api_name=api_name,
@@ -519,7 +529,7 @@ def generate_api_test_cases(
         prompt_tokens_estimate = prompt_length // 3  # 粗略估算：中文约3字符=1token
         logger.info("【生成用例】prompt长度=%d字符，估算token数≈%d", prompt_length, prompt_tokens_estimate)
 
-        raw_output_local = client.complete(prompt, max_tokens=16384, timeout=600)
+        raw_output_local = llm_client.complete(prompt, max_tokens=16384, timeout=600)
         logger.info("【生成用例】大模型返回原始输出长度=%d", len(raw_output_local))
         logger.info("【生成用例-完整响应】\n%s", raw_output_local)
 

@@ -33,10 +33,23 @@ class APITestDocProcessor:
     SUPPORTED_DOCX_EXTENSIONS = {".docx"}
     SUPPORTED_IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg"}
 
-    def __init__(self, upload_dir: str = "uploads/api_auto_test"):
+    def __init__(
+        self,
+        upload_dir: str = "uploads/api_auto_test",
+        api_analyzer: Optional[APIDocAnalyzer] = None,
+        flowchart_analyzer: Optional[FlowchartAnalyzer] = None,
+    ):
+        """
+        Args:
+            upload_dir: 上传文件存储目录
+            api_analyzer: API 文档分析器实例（可选）。不传时内部默认构造。
+                          调用方可通过 APIDocAnalyzer(ai_type="deepseek") 注入指定模型的实例。
+            flowchart_analyzer: 流程图分析器实例（可选）。不传时内部默认构造。
+                               调用方可通过 FlowchartAnalyzer(ai_type="qwen") 注入指定模型的实例。
+        """
         self.upload_dir = upload_dir
-        self.api_analyzer = APIDocAnalyzer()
-        self.flowchart_analyzer = FlowchartAnalyzer()
+        self.api_analyzer = api_analyzer if api_analyzer is not None else APIDocAnalyzer()
+        self.flowchart_analyzer = flowchart_analyzer if flowchart_analyzer is not None else FlowchartAnalyzer()
         self.api_doc_processor = APIDocumentProcessor()
 
         os.makedirs(self.upload_dir, exist_ok=True)

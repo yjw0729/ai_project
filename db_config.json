@@ -1,0 +1,11 @@
+{
+  "default": {
+    "type": "mysql+pymysql",
+    "host": "localhost",
+    "port": 3306,
+    "db_name": "pytest_sxp",
+    "user": "root",
+    "password": "",
+    "charset": "utf8mb4"
+  }
+}
